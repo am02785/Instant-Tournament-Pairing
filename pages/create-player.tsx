@@ -9,9 +9,8 @@ import {
   Box,
   Alert,
 } from '@mui/material';
-import { db } from '../utils/firebase';
-import { collection, addDoc } from 'firebase/firestore';
-import Layout from '../components/Layout';
+// Removed Firebase imports - now using API routes
+// Layout is now handled by _app.tsx
 
 const officeDays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
 
@@ -39,11 +38,10 @@ const CreatePlayer = () => {
     setSuccess(false);
 
     try {
-      // Create a player document in Firestore
+      // Create player using API route
       const playerData: any = {
         name,
         officeDays: selectedDays,
-        createdAt: new Date(),
       };
 
       // Only add seed if it's provided
@@ -51,13 +49,25 @@ const CreatePlayer = () => {
         playerData.seed = seed;
       }
 
-      await addDoc(collection(db, 'players'), playerData);
-      
-      // Reset form after successful submission
-      setName('');
-      setSeed('');
-      setSelectedDays([]);
-      setSuccess(true);
+      const response = await fetch('/api/players', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(playerData),
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        // Reset form after successful submission
+        setName('');
+        setSeed('');
+        setSelectedDays([]);
+        setSuccess(true);
+      } else {
+        throw new Error(result.error || 'Failed to create player');
+      }
       
     } catch (err: any) {
       setError(err.message);
@@ -86,8 +96,7 @@ const CreatePlayer = () => {
   };
 
   return (
-    <Layout>
-      <Box sx={{ maxWidth: 400, mx: 'auto', mt: 4 }}>
+    <Box sx={{ maxWidth: 400, mx: 'auto', mt: 4 }}>
         <Typography variant="h5" gutterBottom>
           Create New Player
         </Typography>
@@ -131,7 +140,6 @@ const CreatePlayer = () => {
           {isSubmitting ? 'Creating Player...' : 'Create Player'}
         </Button>
       </Box>
-    </Layout>
   );
 };
 

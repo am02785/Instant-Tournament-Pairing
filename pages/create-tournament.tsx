@@ -10,9 +10,7 @@ import {
   Snackbar,
   Alert,
 } from '@mui/material';
-import { db } from '../utils/firebase';
-import { addDoc, collection, getDocs, Timestamp } from 'firebase/firestore';
-import { getAuth } from 'firebase/auth';
+// Removed Firebase imports - now using API routes
 import { generateOptimalTournament } from 'utils/pairingLogic';
 
 interface Player {
@@ -45,33 +43,28 @@ export default function CreateTournament() {
   const [players, setPlayers] = useState<Player[]>([]);
   const [selectedPlayerIds, setSelectedPlayerIds] = useState<string[]>([]);
   const [tournamentName, setTournamentName] = useState('');
-  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [currentUserId, setCurrentUserId] = useState<string | null>('temp-user-id');
   const [openSnackbar, setOpenSnackbar] = useState(false);
   const [snackbarMessage, setSnackbarMessage] = useState('');
 
   useEffect(() => {
     const fetchPlayers = async () => {
       try {
-        const auth = getAuth();
-        const currentUser = auth.currentUser;
-        if (!currentUser) return;
+        const response = await fetch('/api/players');
+        const data = await response.json();
+        
+        if (data.success) {
+          const playersData = data.players.map((player: any) => ({
+            id: player.id,
+            name: player.name || 'Unnamed',
+            officeDays: player.officeDays || [],
+            seed: player.seed,
+          })) as Player[];
 
-        setCurrentUserId(currentUser.uid);
-
-        const snapshot = await getDocs(collection(db, 'players'));
-        const playersData = snapshot.docs.map((doc) => {
-          const data = doc.data();
-          return {
-            id: doc.id,
-            name: data.name || 'Unnamed',
-            officeDays: data.officeDays || [],
-            seed: data.seed,
-          };
-        }) as Player[];
-
-        setPlayers(playersData);
+          setPlayers(playersData);
+        }
       } catch (err) {
-        console.error('Error fetching users:', err);
+        console.error('Error fetching players:', err);
       }
     };
 
@@ -108,26 +101,38 @@ export default function CreateTournament() {
       })
     })).filter(match => match.player2 || match.player1); // Remove any malformed matches
 
-    // Create the tournament document in Firestore
+    // Create the tournament using API route
     try {
-      const tournamentData = cleanObject({
+      const tournamentData = {
         name: tournamentName,
         players: selectedPlayers.map(p => cleanObject(p)),
         bracket: cleanedMatches,
-        createdAt: new Date().toISOString(),
         createdBy: currentUserId
+      };
+
+      const response = await fetch('/api/tournaments', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(tournamentData),
       });
 
-      const tournamentRef = await addDoc(collection(db, 'tournaments'), tournamentData);
-      console.log('Tournament created with ID:', tournamentRef.id);
+      const result = await response.json();
 
-      // Show success Snackbar
-      setSnackbarMessage('Tournament created successfully!');
-      setOpenSnackbar(true);
-      
-      // Clear the form
-      setTournamentName('');
-      setSelectedPlayerIds([]);
+      if (result.success) {
+        console.log('Tournament created with ID:', result.tournament.id);
+        
+        // Show success Snackbar
+        setSnackbarMessage('Tournament created successfully!');
+        setOpenSnackbar(true);
+        
+        // Clear the form
+        setTournamentName('');
+        setSelectedPlayerIds([]);
+      } else {
+        throw new Error(result.error || 'Failed to create tournament');
+      }
     } catch (error) {
       console.error('Error creating tournament:', error);
       setSnackbarMessage('Error creating tournament. Please try again.');

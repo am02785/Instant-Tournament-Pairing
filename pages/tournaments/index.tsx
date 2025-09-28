@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { db } from '../../utils/firebase';
-import { collection, getDocs } from 'firebase/firestore';
+// Removed Firebase imports - now using API routes
 import {
   Typography,
   Card,
@@ -10,7 +9,7 @@ import {
   Box,
 } from '@mui/material';
 import Link from 'next/link';
-import Layout from '../../components/Layout';
+// Layout is now handled by _app.tsx
 
 interface Tournament {
   id: string;
@@ -23,20 +22,23 @@ export default function Tournaments() {
 
   useEffect(() => {
     const fetchTournaments = async () => {
-      const snapshot = await getDocs(collection(db, 'tournaments'));
-      const tournamentsData = snapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      })) as Tournament[];
-      setTournaments(tournamentsData);
+      try {
+        const response = await fetch('/api/tournaments');
+        const data = await response.json();
+        
+        if (data.success) {
+          setTournaments(data.tournaments);
+        }
+      } catch (error) {
+        console.error('Error fetching tournaments:', error);
+      }
     };
 
     fetchTournaments();
   }, []);
 
   return (
-    <Layout>
-      <Box sx={{ p: 3, width: '100vw', maxWidth: 'none' }}>
+    <Box sx={{ p: 3, width: '100vw', maxWidth: 'none' }}>
         <Typography variant="h4" gutterBottom>
           Tournaments
         </Typography>
@@ -74,6 +76,5 @@ export default function Tournaments() {
           ))}
         </Grid>
       </Box>
-    </Layout>
   );
 }

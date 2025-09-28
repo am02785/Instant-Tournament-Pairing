@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { db } from '../../utils/firebase';
-import { doc, getDoc, updateDoc, collection, query, where, getDocs, writeBatch } from 'firebase/firestore';
+// Firebase db import removed - now using API routes
+// Firebase imports removed - now using API routes
 import { 
   Paper, 
   Typography, 
@@ -52,11 +52,11 @@ const TournamentDetails = () => {
     }
 
     try {
-      const tournamentRef = doc(db, 'tournaments', id);
-      const tournamentSnapshot = await getDoc(tournamentRef);
+      const response = await fetch(`/api/tournaments/${id}`);
+      const data = await response.json();
 
-      if (tournamentSnapshot.exists()) {
-        const tournamentData = tournamentSnapshot.data() as Tournament;
+      if (data.success) {
+        const tournamentData = data.tournament as Tournament;
         
         // Ensure all matches have IDs
         if (tournamentData.bracket) {
@@ -73,7 +73,7 @@ const TournamentDetails = () => {
         
         setTournament(tournamentData);
       } else {
-        console.log('No such tournament!');
+        console.log('Tournament not found:', data.error);
       }
     } catch (error) {
       console.error('Error fetching tournament:', error);
@@ -82,8 +82,10 @@ const TournamentDetails = () => {
   }, [id]);
 
   useEffect(() => {
-    fetchTournament();
-  }, [fetchTournament]);
+    if (id) {
+      fetchTournament();
+    }
+  }, [id, fetchTournament]);
 
   // Get matches by stage and round
   const getGroupStageMatches = (): Match[] => {
@@ -211,6 +213,30 @@ const TournamentDetails = () => {
     return qualifiedPlayers;
   };
 
+  // Helper function to update tournament bracket
+  const updateTournament = async (bracket: Match[]) => {
+    if (!id || typeof id !== 'string') return;
+    
+    try {
+      const response = await fetch(`/api/tournaments/${id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ bracket }),
+      });
+      
+      const data = await response.json();
+      
+      if (!data.success) {
+        throw new Error(data.error || 'Failed to update tournament');
+      }
+    } catch (error) {
+      console.error('Error updating tournament:', error);
+      throw error;
+    }
+  };
+
   // Generate initial knockout matches when button is pressed
   const generateKnockoutMatches = async (): Promise<void> => {
     if (!tournament?.bracket || !id || typeof id !== 'string') return;
@@ -317,9 +343,7 @@ const TournamentDetails = () => {
       // Clean the entire bracket before updating
       const cleanedBracket = [...tournament.bracket.map(cleanObject), ...allKnockoutMatches];
 
-      await updateDoc(doc(db, 'tournaments', id), {
-        bracket: cleanedBracket
-      });
+      await updateTournament(cleanedBracket);
 
       await fetchTournament();
     } catch (error) {
@@ -434,94 +458,22 @@ const TournamentDetails = () => {
     try {
       const rankings = calculateTournamentRankings();
       
-      // Get all existing players to understand the current seeding landscape
-      const playersQuery = query(collection(db, 'players'));
-      const playersSnapshot = await getDocs(playersQuery);
-      const allPlayers = playersSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Player & { id: string }));
-      
-      // Separate tournament players from non-tournament players
-      const tournamentPlayerIds = new Set(rankings.map(r => r.player.id));
-      const nonTournamentPlayers = allPlayers.filter(p => !tournamentPlayerIds.has(p.id));
-      const tournamentPlayers = allPlayers.filter(p => tournamentPlayerIds.has(p.id));
-      
-      // Create a new global ranking system
-      const newGlobalRankings: Array<{ id: string; seed: number; fromTournament: boolean }> = [];
-      
-      // Add tournament results in order of their performance
-      rankings.forEach((ranking, index) => {
-        newGlobalRankings.push({
-          id: ranking.player.id,
-          seed: index + 1,
-          fromTournament: true
-        });
+      // Call the API to finalize the tournament
+      const response = await fetch(`/api/tournaments/${id}/finalize`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ rankings }),
       });
       
-      // Add non-tournament players, preserving their relative order but adjusting positions
-      const sortedNonTournamentPlayers = nonTournamentPlayers
-        .filter(p => typeof p.seed === 'number')
-        .sort((a, b) => (a.seed || 0) - (b.seed || 0));
+      const data = await response.json();
       
-      // Merge non-tournament players into the rankings
-      // For simplicity, place them after tournament players, but maintain their relative order
-      let currentRank = rankings.length + 1;
-      sortedNonTournamentPlayers.forEach(player => {
-        newGlobalRankings.push({
-          id: player.id,
-          seed: currentRank,
-          fromTournament: false
-        });
-        currentRank++;
-      });
-      
-      // Add non-seeded non-tournament players at the end
-      const unseededNonTournamentPlayers = nonTournamentPlayers.filter(p => typeof p.seed !== 'number');
-      unseededNonTournamentPlayers.forEach(player => {
-        newGlobalRankings.push({
-          id: player.id,
-          seed: currentRank,
-          fromTournament: false
-        });
-        currentRank++;
-      });
-      
-      // Create a batch for updating multiple documents
-      const batch = writeBatch(db);
-      
-      // Update tournament as complete with final rankings
-      const tournamentRef = doc(db, 'tournaments', id);
-      batch.update(tournamentRef, { 
-        complete: true,
-        finalRankings: rankings
-      });
-      
-      // Update all player seeds based on new global rankings
-      let updatedCount = 0;
-      for (const globalRanking of newGlobalRankings) {
-        const playerRef = doc(db, 'players', globalRanking.id);
-        const playerDoc = await getDoc(playerRef);
-        
-        if (playerDoc.exists()) {
-          const currentData = playerDoc.data();
-          const oldSeed = currentData.seed;
-          
-          // Only update if the seed actually changed
-          if (oldSeed !== globalRanking.seed) {
-            batch.update(playerRef, {
-              ...currentData,
-              seed: globalRanking.seed
-            });
-            updatedCount++;
-          }
-        }
+      if (!data.success) {
+        throw new Error(data.error || 'Failed to finalize tournament');
       }
       
-      // Commit all updates
-      await batch.commit();
-      
-      const tournamentPlayerCount = rankings.length;
-      const totalPlayerCount = newGlobalRankings.length;
-      
-      alert(`Tournament finalized! Global rankings updated:\n- ${tournamentPlayerCount} tournament players ranked 1-${tournamentPlayerCount}\n- ${totalPlayerCount - tournamentPlayerCount} other players re-ranked\n- ${updatedCount} total seed changes made`);
+      alert(`Tournament finalized! Global rankings updated. ${data.updatedCount || 0} player seeds were updated.`);
       await fetchTournament();
       
     } catch (error) {
@@ -606,9 +558,7 @@ const TournamentDetails = () => {
       // Only update if there were changes
       if (hasUpdates) {
         console.log('Updating bracket with advanced players');
-        await updateDoc(doc(db, 'tournaments', id), {
-          bracket: updatedBracket
-        });
+        await updateTournament(updatedBracket);
 
         // Fetch updated tournament data
         await fetchTournament();
@@ -656,9 +606,7 @@ const TournamentDetails = () => {
       ).filter(Boolean);
 
       // Update the database first
-      await updateDoc(doc(db, 'tournaments', id), {
-        bracket: updatedBracket
-      });
+      await updateTournament(updatedBracket);
       
       console.log('Match updated successfully');
       
@@ -886,29 +834,24 @@ const TournamentDetails = () => {
 
   if (loading) {
     return (
-      <Layout>
-        <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
-          <CircularProgress />
-        </Box>
-      </Layout>
+      <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
+        <CircularProgress />
+      </Box>
     );
   }
 
   if (!tournament) {
     return (
-      <Layout>
-        <Paper sx={{ p: 4 }}>
-          <Typography variant="h4" color="error">
-            Tournament not found
-          </Typography>
-        </Paper>
-      </Layout>
+      <Paper sx={{ p: 4 }}>
+        <Typography variant="h4" color="error">
+          Tournament not found
+        </Typography>
+      </Paper>
     );
   }
 
   return (
-    <Layout>
-      <Paper sx={{ p: 4 }}>
+    <Paper sx={{ p: 4 }}>
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
           <Typography variant="h4">
             {tournament.name || 'Tournament Details'}
@@ -997,7 +940,6 @@ const TournamentDetails = () => {
           </Grid>
         </Grid>
       </Paper>
-    </Layout>
   );
 };
 // Match Card Component

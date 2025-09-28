@@ -6,9 +6,8 @@ import {
   Box,
   Alert,
 } from '@mui/material';
-import { auth } from '../utils/firebase';
-import { createUserWithEmailAndPassword } from 'firebase/auth';
-import Layout from '../components/Layout';
+import { signUp } from '../utils/auth';
+// Layout is now handled by _app.tsx
 
 const SignUp = () => {
   const [email, setEmail] = useState('');
@@ -28,16 +27,21 @@ const SignUp = () => {
     setSuccess(false);
 
     try {
-      // Create user account with Firebase Authentication
-      await createUserWithEmailAndPassword(auth, email, password);
-      
-      // Reset form after successful signup
-      setEmail('');
-      setPassword('');
-      setSuccess(true);
-      
+      const result = await signUp(email, password);
+      if (result.success) {
+        // Reset form after successful signup
+        setEmail('');
+        setPassword('');
+        setSuccess(true);
+        // Redirect will be handled by _app.tsx after a short delay
+        setTimeout(() => {
+          window.location.reload();
+        }, 2000);
+      } else {
+        setError(result.error || 'Failed to create account');
+      }
     } catch (err: any) {
-      setError(err.message);
+      setError('An unexpected error occurred');
       console.error('Error signing up: ', err);
     } finally {
       setIsSubmitting(false);
@@ -45,8 +49,7 @@ const SignUp = () => {
   };
 
   return (
-    <Layout>
-      <Box sx={{ maxWidth: 400, mx: 'auto', mt: 4 }}>
+    <Box sx={{ maxWidth: 400, mx: 'auto', mt: 4 }}>
         <Typography variant="h5" gutterBottom>
           Sign Up
         </Typography>
@@ -74,7 +77,6 @@ const SignUp = () => {
           {isSubmitting ? 'Creating Account...' : 'Sign Up'}
         </Button>
       </Box>
-    </Layout>
   );
 };
 

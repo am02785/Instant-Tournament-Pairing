@@ -9,14 +9,17 @@ import {
   Typography,
 } from '@mui/material';
 import { ReactNode } from 'react';
-import { useAuthState } from 'react-firebase-hooks/auth';
-import { auth } from '../utils/firebase';
+import { User } from '../utils/auth';
 
 const drawerWidth = 240;
 
-export default function Layout({ children }: { children: ReactNode }) {
+interface LayoutProps {
+  children: ReactNode;
+  user?: User | null;
+}
+
+export default function Layout({ children, user }: LayoutProps) {
   const router = useRouter();
-  const [user] = useAuthState(auth);
 
   const navItems = user
     ? [
