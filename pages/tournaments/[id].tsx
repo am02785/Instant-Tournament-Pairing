@@ -376,14 +376,27 @@ const TournamentDetails = () => {
     
     if (knockoutMatches.length === 0) {
       // If no knockout stage, rank by group stage performance
-      const allPlayers: { player: Player; points: number }[] = [];
+      const allPlayers: { player: Player; points: number; wins: number }[] = [];
       Object.values(groupStandings).forEach(standings => {
         standings.forEach(standing => {
-          allPlayers.push({ player: standing.player, points: standing.points });
+          allPlayers.push({ 
+            player: standing.player, 
+            points: standing.points,
+            wins: standing.wins
+          });
         });
       });
       
-      allPlayers.sort((a, b) => b.points - a.points);
+      // Use the same sorting logic as qualification: points first, then wins as tiebreaker
+      allPlayers.sort((a, b) => {
+        // First sort by points (descending)
+        if (b.points !== a.points) {
+          return b.points - a.points;
+        }
+        // Then by wins as tiebreaker (descending)
+        return b.wins - a.wins;
+      });
+      
       return allPlayers.map((item, index) => ({
         player: item.player,
         rank: index + 1,
@@ -452,8 +465,52 @@ const TournamentDetails = () => {
       }
     });
 
+    // Add ALL tournament players who didn't make it to knockout stages
+    // These players should be ranked based on their group stage performance
+    if (tournament?.players) {
+      const knockoutPlayerIds = new Set(playerRankings.keys());
+      const nonKnockoutPlayers: { player: Player; points: number; wins: number }[] = [];
+      
+      // Get all players who didn't make it to knockout stages
+      tournament.players.forEach(player => {
+        if (!knockoutPlayerIds.has(player.id)) {
+          // Calculate their group stage performance
+          let totalPoints = 0;
+          let totalWins = 0;
+          Object.values(groupStandings).forEach(standings => {
+            const standing = standings.find(s => s.player.id === player.id);
+            if (standing) {
+              totalPoints = standing.points;
+              totalWins = standing.wins;
+            }
+          });
+          nonKnockoutPlayers.push({ player, points: totalPoints, wins: totalWins });
+        }
+      });
+      
+      // Sort non-knockout players by their group stage performance
+      // Use the same sorting logic as qualification: points first, then wins as tiebreaker
+      nonKnockoutPlayers.sort((a, b) => {
+        // First sort by points (descending)
+        if (b.points !== a.points) {
+          return b.points - a.points;
+        }
+        // Then by wins as tiebreaker (descending)
+        return (b as any).wins - (a as any).wins;
+      });
+      
+      // Add them to rankings after knockout players
+      nonKnockoutPlayers.forEach((item, index) => {
+        playerRankings.set(item.player.id, { 
+          player: item.player, 
+          rank: currentRank + index, 
+          points: item.points 
+        });
+      });
+    }
+
     return Array.from(playerRankings.values()).sort((a, b) => a.rank - b.rank);
-  }, [getKnockoutMatches, getGroupStandings, getQualifiedKnockoutPlayers]);
+  }, [getKnockoutMatches, getGroupStandings, getQualifiedKnockoutPlayers, tournament]);
 
   // Finalize tournament and update player rankings
   const finalizeTournament = useCallback(async (): Promise<void> => {
