@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 // Firebase db import removed - now using API routes
 // Firebase imports removed - now using API routes
 import { 
@@ -83,27 +83,27 @@ const TournamentDetails = () => {
 
   useEffect(() => {
     if (id) {
-      fetchTournament();
+    fetchTournament();
     }
   }, [id, fetchTournament]);
 
   // Get matches by stage and round
-  const getGroupStageMatches = (): Match[] => {
+  const getGroupStageMatches = useCallback((): Match[] => {
     return tournament?.bracket?.filter(match => match && match.stage === 'group') || [];
-  };
+  }, [tournament?.bracket]);
 
-  const getKnockoutMatches = (): Match[] => {
+  const getKnockoutMatches = useCallback((): Match[] => {
     return tournament?.bracket?.filter(match => match && match.stage === 'knockout') || [];
-  };
+  }, [tournament?.bracket]);
 
   // Check if knockout stage has started
-  const hasKnockoutStarted = (): boolean => {
+  const hasKnockoutStarted = useCallback((): boolean => {
     const knockoutMatches = getKnockoutMatches();
     return knockoutMatches.length > 0;
-  };
+  }, [getKnockoutMatches]);
 
   // Check if a match can be updated (no future completed matches depend on it)
-  const canUpdateMatch = (matchToUpdate: Match): boolean => {
+  const canUpdateMatch = useCallback((matchToUpdate: Match): boolean => {
     if (!matchToUpdate?.id) return false;
     
     // If tournament is finalized, no edits allowed
@@ -137,10 +137,10 @@ const TournamentDetails = () => {
     }
     
     return true;
-  };
+  }, [tournament?.complete, hasKnockoutStarted, getKnockoutMatches]);
 
   // Get group standings
-  const getGroupStandings = (): { [groupId: string]: GroupStanding[] } => {
+  const getGroupStandings = useCallback((): { [groupId: string]: GroupStanding[] } => {
     const groupMatches = getGroupStageMatches();
     const groups: { [groupId: string]: GroupStanding[] } = {};
 
@@ -187,10 +187,10 @@ const TournamentDetails = () => {
     });
 
     return groups;
-  };
+  }, [getGroupStageMatches]);
 
   // Get top 2 players from each group for knockout qualification
-  const getQualifiedKnockoutPlayers = (): Player[] => {
+  const getQualifiedKnockoutPlayers = useCallback((): Player[] => {
     const groupStandings = getGroupStandings();
     const qualifiedPlayers: Player[] = [];
     
@@ -211,11 +211,14 @@ const TournamentDetails = () => {
     });
     
     return qualifiedPlayers;
-  };
+  }, [getGroupStandings]);
 
   // Helper function to update tournament bracket
-  const updateTournament = async (bracket: Match[]) => {
-    if (!id || typeof id !== 'string') return;
+  const updateTournament = useCallback(async (bracket: Match[]) => {
+    if (!id || typeof id !== 'string') {
+      console.error('Invalid tournament ID');
+      return;
+    }
     
     try {
       const response = await fetch(`/api/tournaments/${id}`, {
@@ -235,10 +238,10 @@ const TournamentDetails = () => {
       console.error('Error updating tournament:', error);
       throw error;
     }
-  };
+  }, [id]);
 
   // Generate initial knockout matches when button is pressed
-  const generateKnockoutMatches = async (): Promise<void> => {
+  const generateKnockoutMatches = useCallback(async (): Promise<void> => {
     if (!tournament?.bracket || !id || typeof id !== 'string') return;
 
     try {
@@ -345,15 +348,16 @@ const TournamentDetails = () => {
 
       await updateTournament(cleanedBracket);
 
-      await fetchTournament();
+      // Update local state instead of refetching
+      setTournament(prev => prev ? { ...prev, bracket: cleanedBracket } : null);
     } catch (error) {
       console.error('Error generating knockout matches:', error);
       alert('Error generating knockout matches. Please try again.');
     }
-  };
+  }, [tournament?.bracket, id, getQualifiedKnockoutPlayers, updateTournament]);
 
   // Check if tournament finals are complete
-  const isTournamentFinalsComplete = (): boolean => {
+  const isTournamentFinalsComplete = useCallback((): boolean => {
     const knockoutMatches = getKnockoutMatches();
     if (knockoutMatches.length === 0) return false;
     
@@ -362,10 +366,10 @@ const TournamentDetails = () => {
     const finalMatch = knockoutMatches.find(m => m?.round === finalRound);
     
     return finalMatch?.complete === true && finalMatch?.winnerId != null;
-  };
+  }, [getKnockoutMatches]);
 
   // Calculate final tournament rankings
-  const calculateTournamentRankings = (): { player: Player; rank: number; points: number }[] => {
+  const calculateTournamentRankings = useCallback((): { player: Player; rank: number; points: number }[] => {
     const rankings: { player: Player; rank: number; points: number }[] = [];
     const knockoutMatches = getKnockoutMatches();
     const groupStandings = getGroupStandings();
@@ -449,10 +453,10 @@ const TournamentDetails = () => {
     });
 
     return Array.from(playerRankings.values()).sort((a, b) => a.rank - b.rank);
-  };
+  }, [getKnockoutMatches, getGroupStandings, getQualifiedKnockoutPlayers]);
 
   // Finalize tournament and update player rankings
-  const finalizeTournament = async (): Promise<void> => {
+  const finalizeTournament = useCallback(async (): Promise<void> => {
     if (!tournament || !id || typeof id !== 'string') return;
     
     try {
@@ -474,46 +478,240 @@ const TournamentDetails = () => {
       }
       
       alert(`Tournament finalized! Global rankings updated. ${data.updatedCount || 0} player seeds were updated.`);
-      await fetchTournament();
+      // Update local state to mark tournament as complete
+      setTournament(prev => prev ? { ...prev, complete: true, finalRankings: rankings } : null);
       
     } catch (error) {
       console.error('Error finalizing tournament:', error);
       alert('Error finalizing tournament. Please try again.');
     }
+  }, [tournament, id, calculateTournamentRankings]);
+
+  // Update future matches when a knockout winner changes
+  const updateFutureMatchesForWinnerChange = async (changedMatchId: string, newWinnerId: string, oldWinnerId: string, currentBracket: Match[]): Promise<Match[]> => {
+    console.log('=== updateFutureMatchesForWinnerChange START ===', { changedMatchId, newWinnerId, oldWinnerId });
+    
+    if (!currentBracket || !id || typeof id !== 'string') {
+      console.log('Invalid parameters for future match update');
+      return currentBracket;
+    }
+
+    try {
+      console.log(`Updating future matches for winner change: ${oldWinnerId} -> ${newWinnerId}`);
+      
+      const updatedBracket = currentBracket.map(match => {
+        if (!match || match.stage !== 'knockout') return match;
+        
+        // Check if this match is fed by the changed match
+        const changedMatch = currentBracket.find(m => m?.id === changedMatchId);
+        if (!changedMatch?.futureMatchId || changedMatch.futureMatchId !== match.id) {
+          return match;
+        }
+        
+        console.log(`Updating future match ${match.id} for winner change`);
+        
+        // Find the new winner player object
+        const newWinner = changedMatch.player1?.id === newWinnerId 
+          ? changedMatch.player1 
+          : changedMatch.player2;
+        
+        if (!newWinner?.id) {
+          console.log('New winner not found, skipping match');
+          return match;
+        }
+        
+        // Update the match with the new winner
+        let updatedMatch = { ...match };
+        
+        // Replace the old winner with the new winner
+        if (updatedMatch.player1?.id === oldWinnerId) {
+          console.log(`Replacing player1 ${oldWinnerId} with ${newWinnerId} in match ${match.id}`);
+          updatedMatch.player1 = newWinner;
+          // Reset match completion if it was completed with the old winner
+          if (updatedMatch.complete && updatedMatch.winnerId === oldWinnerId) {
+            updatedMatch.complete = false;
+            updatedMatch.winnerId = undefined;
+            updatedMatch.player1Points = 0;
+            updatedMatch.player2Points = 0;
+          }
+        } else if (updatedMatch.player2?.id === oldWinnerId) {
+          console.log(`Replacing player2 ${oldWinnerId} with ${newWinnerId} in match ${match.id}`);
+          updatedMatch.player2 = newWinner;
+          // Reset match completion if it was completed with the old winner
+          if (updatedMatch.complete && updatedMatch.winnerId === oldWinnerId) {
+            updatedMatch.complete = false;
+            updatedMatch.winnerId = undefined;
+            updatedMatch.player1Points = 0;
+            updatedMatch.player2Points = 0;
+          }
+        }
+        
+        return updatedMatch;
+      });
+      
+      console.log('Updated bracket for future matches, length:', updatedBracket.length);
+      
+      // Clean up and validate the bracket before returning
+      const cleanedBracket = cleanupAndValidateBracket(updatedBracket);
+      console.log('Cleaned bracket for future matches, length:', cleanedBracket.length);
+      
+      // Update the tournament with the cleaned bracket
+      await updateTournament(cleanedBracket);
+      console.log('Future matches updated for winner change');
+      console.log('=== updateFutureMatchesForWinnerChange END ===');
+      
+      return cleanedBracket;
+      
+    } catch (error) {
+      console.error('Error updating future matches for winner change:', error);
+      return currentBracket;
+    }
+  };
+
+  // Clean up duplicate players and validate match integrity
+  const cleanupAndValidateBracket = (bracket: Match[]): Match[] => {
+    const cleanedBracket = bracket.map(match => {
+      if (!match) return match;
+      
+      // Check for duplicate players in the same match (both group and knockout)
+      if (match.player1?.id && match.player2?.id && match.player1.id === match.player2.id) {
+        return {
+          ...match,
+          player2: undefined,
+          complete: false,
+          winnerId: undefined,
+          player1Points: 0,
+          player2Points: 0
+        };
+      }
+      
+      return match;
+    });
+    
+    // Check for players appearing in multiple matches at the same round (only for knockout)
+    const roundGroups: { [round: number]: Match[] } = {};
+    cleanedBracket.forEach(match => {
+      if (match?.stage === 'knockout' && match.round) {
+        if (!roundGroups[match.round]) roundGroups[match.round] = [];
+        roundGroups[match.round].push(match);
+      }
+    });
+    
+    Object.entries(roundGroups).forEach(([round, matches]) => {
+      const playerCounts: { [playerId: string]: number } = {};
+      
+      matches.forEach(match => {
+        [match.player1, match.player2].forEach(player => {
+          if (player?.id) {
+            playerCounts[player.id] = (playerCounts[player.id] || 0) + 1;
+          }
+        });
+      });
+      
+      // If a player appears in multiple matches at the same round, clear them from all but the first
+      Object.entries(playerCounts).forEach(([playerId, count]) => {
+        if (count > 1) {
+          let firstMatch = true;
+          matches.forEach(match => {
+            if (match.player1?.id === playerId) {
+              if (firstMatch) {
+                firstMatch = false;
+              } else {
+                Object.assign(match, {
+                  player1: undefined,
+                  complete: false,
+                  winnerId: undefined,
+                  player1Points: 0,
+                  player2Points: 0
+                });
+              }
+            }
+            if (match.player2?.id === playerId) {
+              if (firstMatch) {
+                firstMatch = false;
+              } else {
+                Object.assign(match, {
+                  player2: undefined,
+                  complete: false,
+                  winnerId: undefined,
+                  player1Points: 0,
+                  player2Points: 0
+                });
+              }
+            }
+          });
+        }
+      });
+    });
+    
+    return cleanedBracket;
   };
 
   // Auto-advance to next knockout round when current round is complete
-  const autoAdvanceKnockoutRound = async (tournamentData?: Tournament): Promise<void> => {
+  const autoAdvanceKnockoutRound = async (tournamentData?: Tournament): Promise<Match[] | null> => {
     const currentTournament = tournamentData || tournament;
-    if (!currentTournament?.bracket || !id || typeof id !== 'string') return;
+    if (!currentTournament?.bracket || !id || typeof id !== 'string') {
+      return null;
+    }
 
     try {
       const knockoutMatches = currentTournament.bracket.filter(match => match && match.stage === 'knockout') || [];
       
-      if (knockoutMatches.length === 0) return;
+      if (knockoutMatches.length === 0) {
+        return null;
+      }
 
       // Find completed matches that have winners and future matches
       const completedMatches = knockoutMatches.filter(m => 
         m?.complete && m?.winnerId && m?.futureMatchId
       );
 
-      if (completedMatches.length === 0) return;
+      if (completedMatches.length === 0) {
+        return null;
+      }
 
-      console.log('Found completed matches for advancement:', completedMatches.length);
+      // Find matches that need players (empty slots that should be filled)
+      const matchesNeedingPlayers = knockoutMatches.filter(match => 
+        match && 
+        match.stage === 'knockout' && 
+        (!match.player1 || !match.player2) && // Has empty slots
+        completedMatches.some(cm => cm.futureMatchId === match.id) // Has completed feeders
+      );
+
+      if (matchesNeedingPlayers.length === 0) {
+        // No matches need advancement
+        return null;
+      }
 
       let hasUpdates = false;
       const updatedBracket = currentTournament.bracket.map(match => {
         if (!match || match.stage !== 'knockout') return match;
 
-        // Find ALL completed matches that feed into this match
+        // Only process matches that need players
+        if (!matchesNeedingPlayers.some(m => m.id === match.id)) {
+          return match;
+        }
+
+        // Find completed matches that feed into this match
         const feedingMatches = completedMatches.filter(cm => cm.futureMatchId === match.id);
         
         if (feedingMatches.length === 0) return match;
 
-        console.log(`Processing match ${match.id}, found ${feedingMatches.length} feeding matches`);
-
         let updatedMatch = { ...match };
         let matchChanged = false;
+
+        // Clear existing players if we have feeding matches (to avoid conflicts)
+        if (feedingMatches.length > 0) {
+          Object.assign(updatedMatch, {
+            player1: undefined,
+            player2: undefined,
+            complete: false,
+            winnerId: undefined,
+            player1Points: 0,
+            player2Points: 0
+          });
+          matchChanged = true;
+        }
 
         feedingMatches.forEach(completedMatch => {
           if (!completedMatch.winnerId) return;
@@ -529,21 +727,16 @@ const TournamentDetails = () => {
           const winnerAlreadyAssigned = updatedMatch.player1?.id === winner.id || updatedMatch.player2?.id === winner.id;
           
           if (winnerAlreadyAssigned) {
-            console.log(`Winner ${winner.name} already assigned to match ${match.id}`);
             return;
           }
 
           // Determine which slot to place the winner in
           if (!updatedMatch.player1) {
-            console.log(`Assigning ${winner.name} to player1 slot in match ${match.id}`);
             updatedMatch.player1 = winner;
             matchChanged = true;
           } else if (!updatedMatch.player2) {
-            console.log(`Assigning ${winner.name} to player2 slot in match ${match.id}`);
             updatedMatch.player2 = winner;
             matchChanged = true;
-          } else {
-            console.log(`Both slots filled in match ${match.id}, cannot assign ${winner.name}`);
           }
         });
 
@@ -555,45 +748,45 @@ const TournamentDetails = () => {
         return match;
       });
 
+      // Clean up and validate the bracket before updating
+      const cleanedBracket = cleanupAndValidateBracket(updatedBracket);
+
       // Only update if there were changes
       if (hasUpdates) {
-        console.log('Updating bracket with advanced players');
-        await updateTournament(updatedBracket);
-
-        // Fetch updated tournament data
-        await fetchTournament();
-        
-        // Recursively check if more advancements are possible with a delay
-        setTimeout(() => {
-          void autoAdvanceKnockoutRound();
-        }, 300);
+        await updateTournament(cleanedBracket);
+        return cleanedBracket;
       } else {
-        console.log('No updates needed for knockout advancement');
+        return null;
       }
     } catch (error) {
       console.error('Error in autoAdvanceKnockoutRound:', error);
+      return null;
     }
   };  
   
-  const handleUpdateMatch = async (matchId: string, winnerId: string, player1Points: number, player2Points: number): Promise<void> => {
-    if (!tournament?.bracket || !matchId || !id || typeof id !== 'string') return;
+  const handleUpdateMatch = useCallback(async (matchId: string, winnerId: string, player1Points: number, player2Points: number): Promise<void> => {
+    if (!tournament?.bracket || !matchId || !id || typeof id !== 'string') {
+      console.error('Invalid parameters for match update');
+      return;
+    }
 
     // Find the match being updated
     const matchToUpdate = tournament.bracket.find(m => m?.id === matchId);
     if (!matchToUpdate) {
-      console.error('Match not found');
+      console.error('Match not found for ID:', matchId);
       return;
     }
 
     // Check if match can be updated
     if (!canUpdateMatch(matchToUpdate)) {
-      console.error('Cannot update match - future matches depend on this result');
       alert('Cannot update this match because future matches have already been completed with players from this match.');
       return;
     }
 
     try {
-      console.log(`Updating match ${matchId} with winner ${winnerId}`);
+      // Check if this is a knockout match and if the winner is changing
+      const oldWinnerId = matchToUpdate.winnerId;
+      const isWinnerChanging = matchToUpdate.stage === 'knockout' && oldWinnerId && oldWinnerId !== winnerId;
       
       const updatedBracket = tournament.bracket.map((m: Match) =>
         m?.id === matchId ? {
@@ -605,34 +798,59 @@ const TournamentDetails = () => {
         } : m
       ).filter(Boolean);
 
+      // Clean up and validate the bracket before updating
+      const cleanedBracket = cleanupAndValidateBracket(updatedBracket);
+
       // Update the database first
-      await updateTournament(updatedBracket);
+      await updateTournament(cleanedBracket);
       
-      console.log('Match updated successfully');
-      
-      // For knockout matches, check advancement immediately with fresh data
+      // For knockout matches, handle winner changes and advancement
       if (matchToUpdate.stage === 'knockout') {
-        console.log('Starting auto-advancement for knockout match');
+        console.log('Processing knockout match update');
+        let finalBracket = cleanedBracket;
+        
+        // If winner is changing, update future matches first
+        if (isWinnerChanging) {
+          console.log('Winner is changing, updating future matches...');
+          finalBracket = await updateFutureMatchesForWinnerChange(matchId, winnerId, oldWinnerId, cleanedBracket);
+          console.log('Future matches updated, final bracket length:', finalBracket.length);
+        } else {
+          console.log('No winner change detected');
+        }
         
         // Create a temporary tournament object with the updated bracket
         const tempTournament: Tournament = {
           ...tournament,
-          bracket: updatedBracket
+          bracket: finalBracket
         };
         
         // Call auto-advancement with the fresh data
-        await autoAdvanceKnockoutRound(tempTournament);
+        console.log('Calling auto-advancement...');
+        const advancementResult = await autoAdvanceKnockoutRound(tempTournament);
+        console.log('Auto-advancement result:', advancementResult ? 'Updated bracket returned' : 'No changes');
+        
+        // Update local state with the final bracket (use advancement result if available)
+        const finalStateBracket = advancementResult || finalBracket;
+        console.log('Final state bracket length:', finalStateBracket?.length);
+        
+        // Force a state update by creating a new tournament object
+        setTournament(prev => {
+          if (!prev) return null;
+          const newTournament = { ...prev, bracket: finalStateBracket };
+          console.log('Setting new tournament state, bracket length:', newTournament.bracket?.length);
+          return newTournament;
+        });
+      } else {
+        // Update local state for non-knockout matches
+        setTournament(prev => prev ? { ...prev, bracket: cleanedBracket } : null);
       }
-      
-      // Finally, refresh the UI
-      await fetchTournament();
       
     } catch (error) {
       console.error('Error updating match:', error);
     }
-  };
+  }, [tournament?.bracket, id, canUpdateMatch, updateTournament]);
 
-  const renderGroupStage = () => {
+  const renderGroupStage = useMemo(() => {
     const groupMatches = getGroupStageMatches();
     const groupStandings = getGroupStandings();
     const knockoutStarted = hasKnockoutStarted();
@@ -697,9 +915,9 @@ const TournamentDetails = () => {
         ))}
       </Box>
     );
-  };
+  }, [getGroupStageMatches, getGroupStandings, hasKnockoutStarted, handleUpdateMatch, canUpdateMatch, tournament?.bracket]);
   
-  const renderKnockoutStage = () => {
+  const renderKnockoutStage = useMemo(() => {
     const knockoutMatches = getKnockoutMatches();
     const qualifiedPlayers = getQualifiedKnockoutPlayers();
 
@@ -826,7 +1044,7 @@ const TournamentDetails = () => {
         )}
       </Box>
     );
-  };
+  }, [getKnockoutMatches, getQualifiedKnockoutPlayers, tournament?.complete, handleUpdateMatch, canUpdateMatch, tournament?.bracket]);
 
   if (!id || typeof id !== 'string') {
     return null;
@@ -834,24 +1052,24 @@ const TournamentDetails = () => {
 
   if (loading) {
     return (
-      <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
-        <CircularProgress />
-      </Box>
+        <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
+          <CircularProgress />
+        </Box>
     );
   }
 
   if (!tournament) {
     return (
-      <Paper sx={{ p: 4 }}>
-        <Typography variant="h4" color="error">
-          Tournament not found
-        </Typography>
-      </Paper>
+        <Paper sx={{ p: 4 }}>
+          <Typography variant="h4" color="error">
+            Tournament not found
+          </Typography>
+        </Paper>
     );
   }
 
   return (
-    <Paper sx={{ p: 4 }}>
+      <Paper sx={{ p: 4 }}>
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
           <Typography variant="h4">
             {tournament.name || 'Tournament Details'}
@@ -931,12 +1149,12 @@ const TournamentDetails = () => {
         <Grid container spacing={4}>
           {/* Group Stage Section */}
           <Grid item xs={12} lg={6}>
-            {renderGroupStage()}
+            {renderGroupStage}
           </Grid>
 
           {/* Knockout Stage Section */}
           <Grid item xs={12} lg={6}>
-            {renderKnockoutStage()}
+            {renderKnockoutStage}
           </Grid>
         </Grid>
       </Paper>

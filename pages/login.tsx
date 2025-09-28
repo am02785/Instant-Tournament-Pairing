@@ -32,7 +32,8 @@ const Login = () => {
   };
 
   return (
-    <Box sx={{ maxWidth: 400, mx: 'auto', mt: 4 }}>
+    <>
+      <Box sx={{ maxWidth: 400, mx: 'auto', mt: 4 }}>
         <Typography variant="h5" gutterBottom>
           Sign In
         </Typography>
@@ -70,6 +71,7 @@ const Login = () => {
           {snackbarMessage}
         </Alert>
       </Snackbar>
+    </>
   );
 };
 
