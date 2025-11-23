@@ -20,73 +20,40 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(400).json({ error: 'Rankings data is required' });
     }
 
-    // Get all existing players to understand the current seeding landscape
-    const playersQuery = query(collection(db, 'players'));
-    const playersSnapshot = await getDocs(playersQuery);
-    const allPlayers = playersSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
-    
-    // Separate tournament players from non-tournament players
-    const tournamentPlayerIds = new Set(rankings.map((r: any) => r.player.id));
-    const nonTournamentPlayers = allPlayers.filter((p: any) => !tournamentPlayerIds.has(p.id));
-    const tournamentPlayers = allPlayers.filter((p: any) => tournamentPlayerIds.has(p.id));
-    
-    // Create a new global ranking system
-    const newGlobalRankings: Array<{ id: string; seed: number; fromTournament: boolean }> = [];
-    
-    // Add tournament results in order of their performance
-    rankings.forEach((ranking: any, index: number) => {
-      newGlobalRankings.push({
-        id: ranking.player.id,
-        seed: index + 1,
-        fromTournament: true
-      });
-    });
-    
-    // Add non-tournament players, maintaining their relative order but placing them after tournament players
-    let currentRank = rankings.length + 1;
-    nonTournamentPlayers
-      .sort((a: any, b: any) => (a.seed || 999) - (b.seed || 999))
-      .forEach((player: any) => {
-        newGlobalRankings.push({
-          id: player.id,
-          seed: currentRank,
-          fromTournament: false
-        });
-        currentRank++;
-      });
-    
-    // Create a batch for updating multiple documents
+    // Create batch for database updates
     const batch = writeBatch(db);
     
-    // Update tournament as complete with final rankings
+    // Update tournament as complete
     const tournamentRef = doc(db, 'tournaments', id);
     batch.update(tournamentRef, { 
       complete: true,
       finalRankings: rankings
     });
     
-    // Update all player seeds based on new global rankings
+    // Update seeds for tournament players only
+    // Use adjustedSeed from rankings as the new seed (already calculated in calculateTournamentRankings)
+    // Non-tournament players keep their existing seeds - we don't update them
     let updatedCount = 0;
-    for (const globalRanking of newGlobalRankings) {
-      const playerRef = doc(db, 'players', globalRanking.id);
+    for (const ranking of rankings) {
+      const playerRef = doc(db, 'players', ranking.player.id);
       const playerDoc = await getDoc(playerRef);
       
       if (playerDoc.exists()) {
         const currentData = playerDoc.data();
         const oldSeed = currentData?.seed;
+        // Use adjustedSeed as the new seed (this is the seed after adjustment)
+        const newSeed = ranking.adjustedSeed ?? ranking.rank;
         
-        // Only update if the seed actually changed
-        if (oldSeed !== globalRanking.seed) {
+        if (oldSeed !== newSeed) {
           batch.update(playerRef, {
             ...currentData,
-            seed: globalRanking.seed
+            seed: newSeed
           });
           updatedCount++;
         }
       }
     }
     
-    // Commit the batch
     await batch.commit();
     
     res.status(200).json({ 

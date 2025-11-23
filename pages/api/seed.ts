@@ -1,6 +1,6 @@
 import { NextApiRequest, NextApiResponse } from 'next';
 import { db } from '../../utils/firebase';
-import { collection, addDoc } from 'firebase/firestore';
+import { collection, addDoc, getDocs, query } from 'firebase/firestore';
 import { generateOptimalTournament } from '../../utils/pairingLogic';
 
 // Helper to generate dummy players
@@ -20,7 +20,6 @@ function generateDummyPlayers(count: number): any[] {
     const officeDays = shuffledDays.slice(0, numDays);
     
     const player: any = {
-      id: `player-${Date.now()}-${i}-${Math.random().toString(36).substr(2, 9)}`,
       name: `Player ${i + 1}`,
       officeDays,
     };
@@ -62,8 +61,55 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   try {
     const { playerCount = 15 } = req.body;
     
-    const players = generateDummyPlayers(playerCount);
-    const fullBracket = generateOptimalTournament(players);
+    // First, check if there are existing players in the database
+    const playersQuery = query(collection(db, 'players'));
+    const playersSnapshot = await getDocs(playersQuery);
+    const existingPlayers = playersSnapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data()
+    } as any));
+    
+    let savedPlayers: any[] = [];
+    
+    // If we have enough existing players, use those
+    if (existingPlayers.length >= playerCount) {
+      // Use the first playerCount existing players
+      savedPlayers = existingPlayers.slice(0, playerCount);
+    } else {
+      // Use all existing players
+      savedPlayers = [...existingPlayers];
+      
+      // Calculate how many new players we need to create
+      const playersNeeded = playerCount - existingPlayers.length;
+      
+      // Generate only the needed number of new players
+      const newDummyPlayers = generateDummyPlayers(playersNeeded);
+      
+      // Create the new players
+      const newPlayers = await Promise.all(
+        newDummyPlayers.map(async (player) => {
+          const playerData = {
+            name: player.name,
+            officeDays: player.officeDays,
+            seed: player.seed || null,
+            createdAt: new Date().toISOString()
+          };
+          
+          const playerDocRef = await addDoc(collection(db, 'players'), playerData);
+          
+          // Return player with the Firestore ID
+          return {
+            id: playerDocRef.id,
+            ...playerData
+          };
+        })
+      );
+      
+      // Add the new players to the saved players list
+      savedPlayers = [...savedPlayers, ...newPlayers];
+    }
+    
+    const fullBracket = generateOptimalTournament(savedPlayers);
 
     // Only store first round initially (group stage)
     const firstRoundOnly = fullBracket
@@ -99,7 +145,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     const tournamentData = {
       name: 'Seeded Tournament',
-      players: players.map(p => cleanObject(p)),
+      players: savedPlayers.map(p => cleanObject(p)),
       bracket: firstRoundOnly,
       createdAt: new Date().toISOString(),
     };

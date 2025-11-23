@@ -369,10 +369,52 @@ const TournamentDetails = () => {
   }, [getKnockoutMatches]);
 
   // Calculate final tournament rankings
-  const calculateTournamentRankings = useCallback((): { player: Player; rank: number; points: number }[] => {
-    const rankings: { player: Player; rank: number; points: number }[] = [];
+  const calculateTournamentRankings = useCallback((): { player: Player; rank: number; points: number; adjustedSeed?: number }[] => {
+    const rankings: { player: Player; rank: number; points: number; adjustedSeed?: number }[] = [];
     const knockoutMatches = getKnockoutMatches();
     const groupStandings = getGroupStandings();
+    
+    // Seed adjustment values based on tournament position
+    // Lower seed numbers are better, so good performance = negative adjustment (improves seed)
+    const seedAdjustments: { [rank: number]: number } = {
+      1: -5,   // Winner: improve seed by 5
+      2: -2,   // Runner-up: improve seed by 2
+      3: 0,    // Semi-final losers: no change
+      4: +2,   // Quarter-final losers: worsen seed by 2
+      5: +4,   // Earlier knockout eliminations: worsen seed by 4
+      6: +6,   // Group stage 3rd place: worsen seed by 6
+      7: +8,   // Group stage 4th place: worsen seed by 8
+    };
+    
+    // Calculate adjustment for ranks beyond 7 (progressive worsening)
+    const getAdjustment = (rank: number): number => {
+      if (seedAdjustments[rank] !== undefined) {
+        return seedAdjustments[rank];
+      }
+      // For ranks beyond 7, add 2 more for each additional rank
+      return 8 + (rank - 7) * 2;
+    };
+    
+    // Base seed assignment for players without seeds, based on tournament position
+    const getBaseSeedForRank = (rank: number): number => {
+      const baseSeeds: { [rank: number]: number } = {
+        1: 1,   // Winner
+        2: 2,   // Runner-up
+        3: 3,   // Semi-final losers
+        4: 5,   // Quarter-final losers
+        5: 7,   // Earlier knockout eliminations
+        6: 10,  // Group stage 3rd place
+        7: 12,  // Group stage 4th place (worst possible group stage position)
+      };
+      
+      // Group stage players should only get ranks 6 or 7, so we should never need ranks beyond 7
+      // However, keep the fallback for edge cases in knockout-only tournaments
+      if (baseSeeds[rank] !== undefined) {
+        return baseSeeds[rank];
+      }
+      // Fallback for ranks beyond 7 (should only occur in knockout rounds beyond rank 5)
+      return 12 + (rank - 7) * 2;
+    };
     
     if (knockoutMatches.length === 0) {
       // If no knockout stage, rank by group stage performance
@@ -397,11 +439,31 @@ const TournamentDetails = () => {
         return b.wins - a.wins;
       });
       
-      return allPlayers.map((item, index) => ({
-        player: item.player,
-        rank: index + 1,
-        points: item.points
-      }));
+      // Assign ranks and calculate adjusted seeds for group stage only tournament
+      return allPlayers.map((item, index) => {
+        const tournamentRank = index + 1;
+        
+        // If player has no seed, assign one based on tournament position
+        if (item.player.seed === null || item.player.seed === undefined) {
+          const baseSeed = getBaseSeedForRank(tournamentRank);
+          return {
+            player: item.player,
+            rank: tournamentRank,
+            points: item.points,
+            adjustedSeed: baseSeed
+          };
+        } else {
+          // If player has a seed, apply adjustment
+          const adjustment = getAdjustment(tournamentRank);
+          const adjustedSeed = item.player.seed + adjustment;
+          return {
+            player: item.player,
+            rank: tournamentRank,
+            points: item.points,
+            adjustedSeed: adjustedSeed
+          };
+        }
+      });
     }
 
     // Calculate knockout rankings
@@ -425,91 +487,224 @@ const TournamentDetails = () => {
       }
     }
 
-    // 3rd/4th place: Losers of semi-finals
+    // 3rd/4th place: Losers of semi-finals (both get rank 3 - same rank since eliminated at same stage)
+    // But sort by existing seed to maintain global ranking
     if (finalRound > 1) {
       const semiMatches = knockoutMatches.filter(m => m?.round === finalRound - 1 && m?.complete);
-      let rank3and4 = 3;
+      const semiLosers: Player[] = [];
       semiMatches.forEach(match => {
         if (match.winnerId) {
           const loser = match.player1?.id === match.winnerId ? match.player2 : match.player1;
           if (loser && !playerRankings.has(loser.id)) {
-            playerRankings.set(loser.id, { player: loser, rank: rank3and4, points: 50 });
-            rank3and4++;
+            semiLosers.push(loser);
           }
         }
+      });
+      
+      // Sort by existing seed (better seed = better rank within this tier)
+      semiLosers.sort((a, b) => {
+        const aSeed = a.seed || 999;
+        const bSeed = b.seed || 999;
+        return aSeed - bSeed; // Lower seed number = better
+      });
+      
+      // All get rank 3, but order matters for final ranking
+      const rankForSemiLosers = 3;
+      semiLosers.forEach(loser => {
+        playerRankings.set(loser.id, { player: loser, rank: rankForSemiLosers, points: 50 });
       });
     }
 
     // Remaining players: Based on elimination round
+    // Group by round and sort by existing seed within each round
     let currentRank = playerRankings.size + 1;
     for (let round = finalRound - 2; round >= 1; round--) {
       const roundMatches = knockoutMatches.filter(m => m?.round === round && m?.complete);
+      const roundLosers: Player[] = [];
+      
       roundMatches.forEach(match => {
         if (match.winnerId) {
           const loser = match.player1?.id === match.winnerId ? match.player2 : match.player1;
           if (loser && !playerRankings.has(loser.id)) {
-            const points = Math.max(25 - (finalRound - round) * 5, 5);
-            playerRankings.set(loser.id, { player: loser, rank: currentRank, points });
+            roundLosers.push(loser);
           }
         }
       });
+      
+      // Sort by existing seed (better seed = better rank within this round)
+      roundLosers.sort((a, b) => {
+        const aSeed = a.seed || 999;
+        const bSeed = b.seed || 999;
+        return aSeed - bSeed; // Lower seed number = better
+      });
+      
+      // All players eliminated in this round get the same rank
+      const rankForThisRound = currentRank;
+      roundLosers.forEach(loser => {
+        const points = Math.max(25 - (finalRound - round) * 5, 5);
+        playerRankings.set(loser.id, { player: loser, rank: rankForThisRound, points });
+      });
+      
       currentRank = playerRankings.size + 1;
     }
 
     // Add any remaining qualified players who didn't advance far
     const qualifiedPlayers = getQualifiedKnockoutPlayers();
-    qualifiedPlayers.forEach(player => {
-      if (!playerRankings.has(player.id)) {
-        playerRankings.set(player.id, { player, rank: currentRank, points: 10 });
-        currentRank++;
-      }
+    const remainingQualified = qualifiedPlayers.filter(player => !playerRankings.has(player.id));
+    
+    // Sort by existing seed
+    remainingQualified.sort((a, b) => {
+      const aSeed = a.seed || 999;
+      const bSeed = b.seed || 999;
+      return aSeed - bSeed;
+    });
+    
+    // All get the same rank
+    const rankForQualified = currentRank;
+    remainingQualified.forEach(player => {
+      playerRankings.set(player.id, { player, rank: rankForQualified, points: 10 });
     });
 
     // Add ALL tournament players who didn't make it to knockout stages
     // These players should be ranked based on their group stage performance
+    // 3rd place finishers get a better rank than 4th place finishers
     if (tournament?.players) {
       const knockoutPlayerIds = new Set(playerRankings.keys());
-      const nonKnockoutPlayers: { player: Player; points: number; wins: number }[] = [];
+      const thirdPlacePlayers: { player: Player; points: number; wins: number }[] = [];
+      const fourthPlacePlayers: { player: Player; points: number; wins: number }[] = [];
       
-      // Get all players who didn't make it to knockout stages
-      tournament.players.forEach(player => {
+      // Determine each player's position in their group and categorize them
+      Object.entries(groupStandings).forEach(([groupId, standings]) => {
+        // Sort standings by points and wins (same logic as qualification)
+        const sortedStandings = [...standings].sort((a, b) => 
+          b.points - a.points || b.wins - a.wins
+        );
+        
+        // Get players who didn't qualify for knockout (positions 3 and 4 in 4-player groups)
+        sortedStandings.forEach((standing, index) => {
+          const position = index + 1; // 1st, 2nd, 3rd, or 4th
+          const player = standing.player;
+          
+          // Only process players who didn't make it to knockout
         if (!knockoutPlayerIds.has(player.id)) {
-          // Calculate their group stage performance
-          let totalPoints = 0;
-          let totalWins = 0;
-          Object.values(groupStandings).forEach(standings => {
-            const standing = standings.find(s => s.player.id === player.id);
-            if (standing) {
-              totalPoints = standing.points;
-              totalWins = standing.wins;
+            if (position === 3) {
+              thirdPlacePlayers.push({ 
+                player, 
+                points: standing.points, 
+                wins: standing.wins 
+              });
+            } else if (position === 4) {
+              fourthPlacePlayers.push({ 
+                player, 
+                points: standing.points, 
+                wins: standing.wins 
+              });
             }
-          });
-          nonKnockoutPlayers.push({ player, points: totalPoints, wins: totalWins });
-        }
+            // Handle groups with fewer than 4 players - treat as 3rd place
+            else if (position > 2 && sortedStandings.length < 4) {
+              thirdPlacePlayers.push({ 
+                player, 
+                points: standing.points, 
+                wins: standing.wins 
+              });
+            }
+          }
+        });
       });
       
-      // Sort non-knockout players by their group stage performance
-      // Use the same sorting logic as qualification: points first, then wins as tiebreaker
-      nonKnockoutPlayers.sort((a, b) => {
-        // First sort by points (descending)
+      // Sort 3rd place players: first by existing seed (better seed = better rank), then by performance
+      thirdPlacePlayers.sort((a, b) => {
+        const aSeed = a.player.seed || 999;
+        const bSeed = b.player.seed || 999;
+        if (aSeed !== bSeed) {
+          return aSeed - bSeed; // Lower seed number = better
+        }
+        // If same seed, sort by performance
         if (b.points !== a.points) {
           return b.points - a.points;
         }
-        // Then by wins as tiebreaker (descending)
-        return (b as any).wins - (a as any).wins;
+        return b.wins - a.wins;
       });
       
-      // Add them to rankings after knockout players
-      nonKnockoutPlayers.forEach((item, index) => {
+      // Sort 4th place players: first by existing seed (better seed = better rank), then by performance
+      fourthPlacePlayers.sort((a, b) => {
+        const aSeed = a.player.seed || 999;
+        const bSeed = b.player.seed || 999;
+        if (aSeed !== bSeed) {
+          return aSeed - bSeed; // Lower seed number = better
+        }
+        // If same seed, sort by performance
+        if (b.points !== a.points) {
+          return b.points - a.points;
+        }
+        return b.wins - a.wins;
+      });
+      
+      // Add 3rd place players to rankings first (they all get rank 6 - fixed for group stage 3rd place)
+      const rankForThirdPlace = 6;
+      thirdPlacePlayers.forEach((item) => {
         playerRankings.set(item.player.id, { 
           player: item.player, 
-          rank: currentRank + index, 
+          rank: rankForThirdPlace, 
+          points: item.points 
+        });
+      });
+      
+      // Add 4th place players to rankings after 3rd place players
+      // They all get rank 7 (fixed for group stage 4th place - worst possible group stage position)
+      const rankForFourthPlace = 7;
+      fourthPlacePlayers.forEach((item) => {
+        playerRankings.set(item.player.id, { 
+          player: item.player, 
+          rank: rankForFourthPlace, 
           points: item.points 
         });
       });
     }
 
-    return Array.from(playerRankings.values()).sort((a, b) => a.rank - b.rank);
+    // Calculate adjusted seeds for all tournament players based on their tournament performance
+    // The rank represents tournament performance position, adjustedSeed is used for global ranking
+    const tournamentRankingsWithAdjustedSeeds: Array<{ player: Player; rank: number; points: number; adjustedSeed: number }> = [];
+    
+    // Convert playerRankings to array with adjusted seeds
+    Array.from(playerRankings.values()).forEach(ranking => {
+      const tournamentRank = ranking.rank; // This is the tournament performance rank (1st, 2nd, 3rd, etc.)
+      
+      // If player has no seed, assign one based on tournament position
+      if (ranking.player.seed === null || ranking.player.seed === undefined) {
+        const baseSeed = getBaseSeedForRank(tournamentRank);
+        tournamentRankingsWithAdjustedSeeds.push({
+          player: ranking.player,
+          rank: tournamentRank,
+          points: ranking.points,
+          adjustedSeed: baseSeed
+        });
+      } else {
+        // If player has a seed, apply adjustment
+        const adjustment = getAdjustment(tournamentRank);
+        const adjustedSeed = ranking.player.seed + adjustment;
+        
+        tournamentRankingsWithAdjustedSeeds.push({
+          player: ranking.player,
+          rank: tournamentRank, // Keep the tournament performance rank
+          points: ranking.points,
+          adjustedSeed: adjustedSeed // This will be used for global ranking in finalize API
+        });
+      }
+    });
+    
+    // Sort by adjusted seed (lower is better) to determine order
+    // This ensures players with better adjusted seeds come first in the rankings
+    tournamentRankingsWithAdjustedSeeds.sort((a, b) => {
+      if (a.adjustedSeed !== b.adjustedSeed) {
+        return a.adjustedSeed - b.adjustedSeed;
+      }
+      // If same adjusted seed, sort by tournament rank (better performance first)
+      return a.rank - b.rank;
+    });
+    
+    // Return rankings with tournament performance ranks and adjusted seeds
+    return tournamentRankingsWithAdjustedSeeds;
   }, [getKnockoutMatches, getGroupStandings, getQualifiedKnockoutPlayers, tournament]);
 
   // Finalize tournament and update player rankings
@@ -1166,42 +1361,105 @@ const TournamentDetails = () => {
         )}
 
         {/* Final Rankings Display */}
-        {tournament.complete && (
+        {tournament.complete && (() => {
+          const rankings = tournament.finalRankings || calculateTournamentRankings();
+          // Sort by tournament position (rank) - 1st, 2nd, 3rd, etc.
+          const sortedRankings = [...rankings].sort((a: any, b: any) => {
+            return a.rank - b.rank;
+          });
+          
+          // Seed adjustment values for display (matching calculation logic)
+          const seedAdjustments: { [rank: number]: number } = {
+            1: -5, 2: -2, 3: 0, 4: +2, 5: +4, 6: +6, 7: +8
+          };
+          const getAdjustmentForDisplay = (rank: number): number => {
+            if (seedAdjustments[rank] !== undefined) {
+              return seedAdjustments[rank];
+            }
+            return 8 + (rank - 7) * 2;
+          };
+          
+          // Base seed assignment for players without seeds
+          const getBaseSeedForRankDisplay = (rank: number): number => {
+            const baseSeeds: { [rank: number]: number } = {
+              1: 1, 2: 2, 3: 3, 4: 5, 5: 7, 6: 10, 7: 12
+            };
+            if (baseSeeds[rank] !== undefined) {
+              return baseSeeds[rank];
+            }
+            return 12 + (rank - 7) * 2;
+          };
+          
+          return (
           <Card sx={{ mb: 3 }}>
             <CardContent>
               <Typography variant="h5" gutterBottom>
                 Final Rankings
               </Typography>
-              {(tournament.finalRankings || calculateTournamentRankings()).map((ranking, index) => (
-                <Box 
-                  key={ranking.player.id} 
-                  sx={{ 
-                    display: 'flex', 
-                    justifyContent: 'space-between', 
-                    alignItems: 'center',
-                    py: 1,
-                    borderBottom: index < (tournament.finalRankings || calculateTournamentRankings()).length - 1 ? '1px solid #eee' : 'none'
-                  }}
-                >
-                  <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                    <Typography variant="h6" sx={{ mr: 2, minWidth: '40px' }}>
-                      #{ranking.rank}
-                    </Typography>
-                    <Typography variant="body1" sx={{ mr: 2 }}>
-                      {ranking.player.name}
-                    </Typography>
-                    {ranking.rank === 1 && <Chip label="Champion" color="primary" size="small" />}
-                    {ranking.rank === 2 && <Chip label="Runner-up" color="secondary" size="small" />}
-                    {ranking.rank === 3 && <Chip label="3rd Place" color="default" size="small" />}
-                  </Box>
-                  <Typography variant="body2" color="textSecondary">
-                    New Seed: {ranking.rank}
-                  </Typography>
-                </Box>
-              ))}
+                {sortedRankings.map((ranking: any, index: number) => {
+                  const oldSeed = ranking.player.seed ?? null;
+                  const tournamentRank = ranking.rank; // Tournament performance rank (1st, 2nd, 3rd, etc.)
+                  const adjustedSeed = ranking.adjustedSeed ?? (oldSeed !== null ? oldSeed + getAdjustmentForDisplay(tournamentRank) : getBaseSeedForRankDisplay(tournamentRank));
+                  // Only show adjustment if player had an existing seed
+                  const adjustment = oldSeed !== null ? getAdjustmentForDisplay(tournamentRank) : null;
+                  
+                  return (
+                    <Box 
+                      key={ranking.player.id} 
+                      sx={{ 
+                        display: 'flex', 
+                        justifyContent: 'space-between', 
+                        alignItems: 'center',
+                        py: 1,
+                        borderBottom: index < sortedRankings.length - 1 ? '1px solid #eee' : 'none'
+                      }}
+                    >
+                      <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 1 }}>
+                        <Typography variant="h6" sx={{ minWidth: '50px' }}>
+                          #{index + 1}
+                        </Typography>
+                        <Typography variant="body1">
+                          {ranking.player.name}
+                        </Typography>
+                        {tournamentRank === 1 && <Chip label="Champion" color="primary" size="small" />}
+                        {tournamentRank === 2 && <Chip label="Runner-up" color="secondary" size="small" />}
+                        {tournamentRank === 3 && <Chip label="3rd Place" color="default" size="small" />}
+                      </Box>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                        {oldSeed !== null && (
+                          <>
+                            <Typography variant="body2" color="textSecondary">
+                              Seed: {oldSeed}
+                            </Typography>
+                            <Typography variant="body2" color="textSecondary">
+                              →
+                            </Typography>
+                          </>
+                        )}
+                        <Typography variant="body2" color="textSecondary">
+                          {adjustedSeed}
+                        </Typography>
+                        {adjustment !== null && adjustment !== 0 && (
+                          <Chip 
+                            label={`${adjustment > 0 ? '+' : ''}${adjustment}`}
+                            size="small"
+                            color={(adjustment as number) < 0 ? 'success' : 'error'}
+                            sx={{ minWidth: '50px' }}
+                          />
+                        )}
+                        {oldSeed === null && (
+                          <Typography variant="body2" color="textSecondary" sx={{ fontStyle: 'italic' }}>
+                            (assigned)
+                          </Typography>
+                        )}
+                      </Box>
+                    </Box>
+                  );
+                })}
             </CardContent>
           </Card>
-        )}
+          );
+        })()}
 
         <Grid container spacing={4}>
           {/* Group Stage Section */}
