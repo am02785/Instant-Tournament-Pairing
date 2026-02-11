@@ -899,6 +899,89 @@ const TournamentDetails = () => {
     return cleanedBracket;
   };
 
+  // Add a new player into an existing group (creates matches vs all current group members)
+  const handleAddPlayerToGroup = useCallback(async (groupId: string): Promise<void> => {
+    if (!tournament || !tournament.bracket) return;
+
+    // Do not allow structural changes once knockout has started or the tournament is complete
+    if (hasKnockoutStarted() || tournament.complete) {
+      alert('Cannot add players once the knockout stage has started or the tournament has been finalized.');
+      return;
+    }
+
+    const name = window.prompt('Enter the name of the player to add to this group:');
+    if (!name) return;
+
+    const trimmedName = name.trim();
+    if (!trimmedName) return;
+
+    // Create a lightweight player that exists only within this tournament's bracket
+    const newPlayer: Player = {
+      id: generateUUID(),
+      name: trimmedName,
+      officeDays: [],
+    };
+
+    // Find existing group matches
+    const groupMatches = tournament.bracket.filter(
+      (m) => m && m.stage === 'group' && m.groupId === groupId
+    );
+
+    if (groupMatches.length === 0) {
+      alert('No existing matches found for this group. Cannot add a player here.');
+      return;
+    }
+
+    // Collect unique existing players in this group from current matches
+    const existingPlayersMap = new Map<string, Player>();
+    groupMatches.forEach((match) => {
+      if (match.player1?.id && !existingPlayersMap.has(match.player1.id)) {
+        existingPlayersMap.set(match.player1.id, match.player1);
+      }
+      if (match.player2?.id && !existingPlayersMap.has(match.player2.id)) {
+        existingPlayersMap.set(match.player2.id, match.player2);
+      }
+    });
+
+    const existingPlayers = Array.from(existingPlayersMap.values());
+
+    if (existingPlayers.length === 0) {
+      alert('No existing players found in this group.');
+      return;
+    }
+
+    // Use the first match's round as a sensible default; standings logic does not depend on round
+    const baseRound = groupMatches[0]?.round || 1;
+
+    // Create new matches: new player vs every current group member
+    const newMatches: Match[] = existingPlayers.map((player) => ({
+      id: generateUUID(),
+      player1: player,
+      player2: newPlayer,
+      player1Points: 0,
+      player2Points: 0,
+      winnerId: undefined,
+      round: baseRound,
+      complete: false,
+      stage: 'group',
+      groupId,
+      futureMatchId: undefined,
+    }));
+
+    const updatedBracket = cleanupAndValidateBracket([
+      ...tournament.bracket,
+      ...newMatches,
+    ]);
+
+    try {
+      await updateTournament(updatedBracket);
+      setTournament((prev) => (prev ? { ...prev, bracket: updatedBracket } : prev));
+    } catch (error) {
+      console.error('Error adding player to group:', error);
+      alert('Error adding player to group. Please try again.');
+    }
+  }, [tournament, hasKnockoutStarted, updateTournament]);
+
   // Auto-advance to next knockout round when current round is complete
   const autoAdvanceKnockoutRound = async (tournamentData?: Tournament): Promise<Match[] | null> => {
     const currentTournament = tournamentData || tournament;
@@ -1122,9 +1205,20 @@ const TournamentDetails = () => {
         {Object.entries(groupStandings).map(([groupId, standings]) => (
           <Card key={groupId} sx={{ mb: 3 }}>
             <CardContent>
-              <Typography variant="h6" gutterBottom>
-                {groupId.replace('-', ' ').toUpperCase()}
-              </Typography>
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+                <Typography variant="h6">
+                  {groupId.replace('-', ' ').toUpperCase()}
+                </Typography>
+                {!knockoutStarted && !tournament.complete && (
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    onClick={() => handleAddPlayerToGroup(groupId)}
+                  >
+                    Add Player
+                  </Button>
+                )}
+              </Box>
               
               {/* Group Standings */}
               <Box sx={{ mb: 2 }}>
@@ -1167,7 +1261,7 @@ const TournamentDetails = () => {
         ))}
       </Box>
     );
-  }, [getGroupStageMatches, getGroupStandings, hasKnockoutStarted, handleUpdateMatch, canUpdateMatch, tournament?.bracket]);
+  }, [getGroupStageMatches, getGroupStandings, hasKnockoutStarted, handleUpdateMatch, canUpdateMatch, handleAddPlayerToGroup, tournament]);
   
   const renderKnockoutStage = useMemo(() => {
     const knockoutMatches = getKnockoutMatches();
