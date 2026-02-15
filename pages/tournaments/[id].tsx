@@ -14,7 +14,7 @@ import {
   Button
 } from '@mui/material';
 import { useRouter } from 'next/router';
-import { generateKnockoutPairs } from 'utils/pairingLogic';
+import { generateKnockoutPairs, generateKnockoutFirstRoundWorldCup, type QualifiedWithGroupInfo } from 'utils/pairingLogic';
 import { Match, Player, Tournament } from 'types';
 import Layout from '@components/Layout';
 
@@ -213,6 +213,25 @@ const TournamentDetails = () => {
     return qualifiedPlayers;
   }, [getGroupStandings]);
 
+  // Qualified players with group id and place (1st or 2nd) for World Cup style knockout pairing
+  const getQualifiedKnockoutPlayersWithGroupInfo = useCallback((): QualifiedWithGroupInfo[] => {
+    const groupStandings = getGroupStandings();
+    const result: QualifiedWithGroupInfo[] = [];
+    const groupIds = Object.keys(groupStandings).sort();
+    for (const groupId of groupIds) {
+      const standings = groupStandings[groupId];
+      if (!standings?.length) continue;
+      const sorted = [...standings].sort((a, b) => b.points - a.points || b.wins - a.wins);
+      if (sorted[0]?.player) {
+        result.push({ player: sorted[0].player, groupId, place: 1 });
+      }
+      if (sorted[1]?.player) {
+        result.push({ player: sorted[1].player, groupId, place: 2 });
+      }
+    }
+    return result;
+  }, [getGroupStandings]);
+
   // Helper function to update tournament bracket
   const updateTournament = useCallback(async (bracket: Match[]) => {
     if (!id || typeof id !== 'string') {
@@ -319,14 +338,21 @@ const TournamentDetails = () => {
         });
       }
 
-      // Populate first round with actual players
-      const firstRoundMatches = generateKnockoutPairs(qualifiedPlayers, 1);
+      // Populate first round: World Cup style (1st vs 2nd of other group) when we have group structure, else fallback
+      const qualifiedWithGroupInfo = getQualifiedKnockoutPlayersWithGroupInfo();
+      const hasGroupStructure = qualifiedWithGroupInfo.length > 0 && Object.keys(getGroupStandings()).length > 0;
+      const firstRoundMatches = hasGroupStructure
+        ? generateKnockoutFirstRoundWorldCup(qualifiedWithGroupInfo, 1)
+        : generateKnockoutPairs(qualifiedPlayers, 1);
       matchesByRound[1].forEach((baseMatch, matchIndex) => {
         if (matchIndex < firstRoundMatches.length) {
           const match = firstRoundMatches[matchIndex];
           baseMatch.player1 = match.player1 ? cleanObject(match.player1) : null;
           baseMatch.player2 = match.player2 ? cleanObject(match.player2) : null;
-          
+          if (match.player1GroupId != null) baseMatch.player1GroupId = match.player1GroupId;
+          if (match.player2GroupId != null) baseMatch.player2GroupId = match.player2GroupId;
+          if (match.player1GroupPlace != null) baseMatch.player1GroupPlace = match.player1GroupPlace;
+          if (match.player2GroupPlace != null) baseMatch.player2GroupPlace = match.player2GroupPlace;
           // Handle bye situation
           if (!match.player2 && match.player1?.id) {
             baseMatch.winnerId = match.player1.id;
@@ -354,7 +380,7 @@ const TournamentDetails = () => {
       console.error('Error generating knockout matches:', error);
       alert('Error generating knockout matches. Please try again.');
     }
-  }, [tournament?.bracket, id, getQualifiedKnockoutPlayers, updateTournament]);
+  }, [tournament?.bracket, id, getQualifiedKnockoutPlayers, getQualifiedKnockoutPlayersWithGroupInfo, getGroupStandings, updateTournament]);
 
   // Check if tournament finals are complete
   const isTournamentFinalsComplete = useCallback((): boolean => {
@@ -1475,6 +1501,17 @@ const TournamentDetails = () => {
       </Paper>
   );
 };
+// Format group/place for knockout display (e.g. "Group 1", "1st")
+const formatGroupLabel = (groupId: string): string => {
+  const part = groupId.replace(/^group-/, '');
+  return part ? `Group ${part}` : groupId;
+};
+const formatPlace = (place: 1 | 2): string => place === 1 ? '1st' : '2nd';
+const formatPlayerGroupPlace = (groupId?: string, place?: 1 | 2): string => {
+  if (groupId == null || place == null) return '';
+  return ` (${formatGroupLabel(groupId)} ${formatPlace(place)})`;
+};
+
 // Match Card Component
 const MatchCard: React.FC<{ 
   match: Match; 
@@ -1528,11 +1565,12 @@ const MatchCard: React.FC<{
     const hasFeederMatches = knockoutMatches.some((m: Match) => m.futureMatchId === match.id && !m.complete);
     
     if (isWaitingForAdvancement || (match.stage === 'knockout' && hasFeederMatches)) {
+      const p1Label = (match.player1.name || 'Unknown Player') + formatPlayerGroupPlace(match.player1GroupId, match.player1GroupPlace);
       return (
         <Card variant="outlined" sx={{ mb: 1, opacity: 0.7 }}>
           <CardContent sx={{ py: 1 }}>
             <Typography variant="body2" color="textSecondary">
-              {match.player1.name || 'Unknown Player'} vs TBD
+              {p1Label} vs TBD
             </Typography>
             <Typography variant="caption" color="textSecondary">
               Waiting for opponent...
@@ -1543,11 +1581,12 @@ const MatchCard: React.FC<{
     }
     
     // This is a true bye (first round with odd number of players)
+    const byeLabel = (match.player1.name || 'Unknown Player') + formatPlayerGroupPlace(match.player1GroupId, match.player1GroupPlace);
     return (
       <Card variant="outlined" sx={{ mb: 1 }}>
         <CardContent sx={{ py: 1 }}>
           <Typography>
-            {match.player1.name || 'Unknown Player'} (BYE)
+            {byeLabel} (BYE)
           </Typography>
         </CardContent>
       </Card>
@@ -1566,7 +1605,7 @@ const MatchCard: React.FC<{
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <Box>
             <Typography variant="body2">
-              {match.player1?.name || 'Unknown'} vs {match.player2?.name || 'Unknown'}
+              {(match.player1?.name || 'Unknown') + formatPlayerGroupPlace(match.player1GroupId, match.player1GroupPlace)} vs {(match.player2?.name || 'Unknown') + formatPlayerGroupPlace(match.player2GroupId, match.player2GroupPlace)}
             </Typography>
             {match.complete && (
               <Typography variant="caption" color="success.main">

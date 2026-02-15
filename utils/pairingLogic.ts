@@ -11,7 +11,13 @@ type Match = {
   round: number;
   stage: 'group' | 'knockout'; // Added stage identifier
   groupId?: string; // For group stage matches
+  player1GroupId?: string;
+  player2GroupId?: string;
+  player1GroupPlace?: 1 | 2;
+  player2GroupPlace?: 1 | 2;
 };
+
+export type QualifiedWithGroupInfo = { player: Player; groupId: string; place: 1 | 2 };
 
 type Group = {
   id: string;
@@ -220,7 +226,131 @@ export function generateOptimalTournament(players: Player[]): Bracket {
   return groupStageMatches;
 }
 
-// Simple knockout pairing function - pairs players optimally for knockout stage
+// World Cup style: 1st of group i vs 2nd of group (i+1)%N. No same-group matches. Office-day sort for ordering.
+export function generateKnockoutFirstRoundWorldCup(
+  qualified: QualifiedWithGroupInfo[],
+  roundNumber: number
+): Match[] {
+  if (qualified.length === 0) return [];
+  if (qualified.length === 1) {
+    const q = qualified[0];
+    return [{
+      player1: q.player,
+      round: roundNumber,
+      stage: 'knockout',
+      player1GroupId: q.groupId,
+      player1GroupPlace: 1
+    }];
+  }
+
+  const byGroup: Record<string, { first?: Player; second?: Player }> = {};
+  for (const q of qualified) {
+    if (!byGroup[q.groupId]) byGroup[q.groupId] = {};
+    if (q.place === 1) byGroup[q.groupId].first = q.player;
+    else byGroup[q.groupId].second = q.player;
+  }
+  const groupIds = Object.keys(byGroup).sort();
+  const fullGroupIds = groupIds.filter(gid => {
+    const g = byGroup[gid];
+    return g.first != null && g.second != null;
+  });
+
+  let byePlayer: QualifiedWithGroupInfo | null = null;
+  if (qualified.length % 2 === 1) {
+    const singleGroupId = groupIds.find(gid => {
+      const g = byGroup[gid];
+      return ((g.first != null ? 1 : 0) + (g.second != null ? 1 : 0)) === 1;
+    });
+    if (singleGroupId != null) {
+      const g = byGroup[singleGroupId];
+      const p = g.first ?? g.second!;
+      byePlayer = { player: p, groupId: singleGroupId, place: g.first ? 1 : 2 };
+    }
+  }
+
+  const matches: Match[] = [];
+
+  if (fullGroupIds.length === 1) {
+    const gid = fullGroupIds[0];
+    const g = byGroup[gid];
+    matches.push({
+      player1: g.first!,
+      player2: g.second!,
+      round: roundNumber,
+      stage: 'knockout',
+      player1GroupId: gid,
+      player2GroupId: gid,
+      player1GroupPlace: 1,
+      player2GroupPlace: 2
+    });
+  } else if (fullGroupIds.length > 1) {
+    for (let i = 0; i < fullGroupIds.length; i++) {
+      const gidA = fullGroupIds[i];
+      const gidB = fullGroupIds[(i + 1) % fullGroupIds.length];
+      const firstA = byGroup[gidA].first!;
+      const secondB = byGroup[gidB].second!;
+      matches.push({
+        player1: firstA,
+        player2: secondB,
+        round: roundNumber,
+        stage: 'knockout',
+        player1GroupId: gidA,
+        player2GroupId: gidB,
+        player1GroupPlace: 1,
+        player2GroupPlace: 2
+      });
+    }
+  } else if (qualified.length >= 2) {
+    // No full groups (e.g. each group has only 1 qualifier) – pair in order
+    for (let i = 0; i < qualified.length; i += 2) {
+      if (i + 1 < qualified.length) {
+        const a = qualified[i];
+        const b = qualified[i + 1];
+        matches.push({
+          player1: a.player,
+          player2: b.player,
+          round: roundNumber,
+          stage: 'knockout',
+          player1GroupId: a.groupId,
+          player2GroupId: b.groupId,
+          player1GroupPlace: a.place,
+          player2GroupPlace: b.place
+        });
+      } else {
+        matches.push({
+          player1: qualified[i].player,
+          round: roundNumber,
+          stage: 'knockout',
+          player1GroupId: qualified[i].groupId,
+          player1GroupPlace: qualified[i].place
+        });
+      }
+    }
+  }
+
+  if (byePlayer) {
+    matches.push({
+      player1: byePlayer.player,
+      round: roundNumber,
+      stage: 'knockout',
+      player1GroupId: byePlayer.groupId,
+      player1GroupPlace: byePlayer.place
+    });
+  }
+
+  // Sort by office day overlap (higher first); bye matches last
+  matches.sort((a, b) => {
+    if (!a.player2) return 1;
+    if (!b.player2) return -1;
+    const overlapA = getOfficeDayOverlap(a.player1, a.player2);
+    const overlapB = getOfficeDayOverlap(b.player1, b.player2);
+    return overlapB - overlapA;
+  });
+
+  return matches;
+}
+
+// Simple knockout pairing function - pairs players optimally for knockout stage (fallback when no group structure)
 export function generateKnockoutPairs(players: Player[], roundNumber: number): Match[] {
   if (players.length <= 1) return [];
 

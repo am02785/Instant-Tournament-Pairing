@@ -17,6 +17,11 @@ export type Match = {
   stage: 'group' | 'knockout'; // Added stage identifier
   groupId?: string; // For group stage matches
   futureMatchId?: string | null; // ID of the match this winner advances to (null for group stage or final)
+  // Knockout first round: which group/place each player came from (for display)
+  player1GroupId?: string;
+  player2GroupId?: string;
+  player1GroupPlace?: 1 | 2;
+  player2GroupPlace?: 1 | 2;
 };
 
 export type Bracket = Match[];
