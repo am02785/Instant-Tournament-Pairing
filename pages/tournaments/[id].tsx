@@ -356,6 +356,28 @@ const TournamentDetails = () => {
     }
   }, [tournament?.bracket, id, getQualifiedKnockoutPlayers, updateTournament]);
 
+  // Remove all knockout matches so group stage can be edited and knockout regenerated
+  const handleRemoveKnockoutStage = useCallback(async (): Promise<void> => {
+    if (!tournament?.bracket || tournament.complete) {
+      if (tournament?.complete) {
+        alert('Cannot remove knockout stage: tournament has been finalized.');
+      }
+      return;
+    }
+    const confirmed = window.confirm(
+      'Remove all knockout matches? You can then edit the group stage and start the knockout stage again. This cannot be undone for the current knockout data.'
+    );
+    if (!confirmed) return;
+    const newBracket = tournament.bracket.filter((m) => m && m.stage !== 'knockout');
+    try {
+      await updateTournament(newBracket);
+      setTournament((prev) => (prev ? { ...prev, bracket: newBracket } : null));
+    } catch (error) {
+      console.error('Error removing knockout stage:', error);
+      alert('Error removing knockout stage. Please try again.');
+    }
+  }, [tournament, updateTournament]);
+
   // Check if tournament finals are complete
   const isTournamentFinalsComplete = useCallback((): boolean => {
     const knockoutMatches = getKnockoutMatches();
@@ -1209,7 +1231,7 @@ const TournamentDetails = () => {
                 <Typography variant="h6">
                   {groupId.replace('-', ' ').toUpperCase()}
                 </Typography>
-                {!knockoutStarted && !tournament.complete && (
+                {!knockoutStarted && !tournament?.complete && (
                   <Button
                     variant="outlined"
                     size="small"
@@ -1348,9 +1370,21 @@ const TournamentDetails = () => {
           </Box>
         ) : (
           <Box>
-            <Typography variant="h6" gutterBottom>
-              All Knockout Matches
-            </Typography>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+              <Typography variant="h6">
+                All Knockout Matches
+              </Typography>
+              {!tournament?.complete && (
+                <Button
+                  variant="outlined"
+                  color="error"
+                  size="small"
+                  onClick={handleRemoveKnockoutStage}
+                >
+                  Remove knockout stage
+                </Button>
+              )}
+            </Box>
             
             {tournament?.complete && (
               <Alert severity="info" sx={{ mb: 2 }}>
@@ -1390,7 +1424,7 @@ const TournamentDetails = () => {
         )}
       </Box>
     );
-  }, [getKnockoutMatches, getQualifiedKnockoutPlayers, tournament?.complete, handleUpdateMatch, canUpdateMatch, tournament?.bracket]);
+  }, [getKnockoutMatches, getQualifiedKnockoutPlayers, tournament?.complete, handleUpdateMatch, canUpdateMatch, handleRemoveKnockoutStage, tournament?.bracket]);
 
   if (!id || typeof id !== 'string') {
     return null;
