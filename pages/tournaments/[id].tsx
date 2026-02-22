@@ -41,6 +41,7 @@ const generateUUID = (): string => {
 const TournamentDetails = () => {
   const [tournament, setTournament] = useState<Tournament | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
+  const [emptyMatchAddForm, setEmptyMatchAddForm] = useState<{ matchId: string; p1Id: string; p2Id: string } | null>(null);
 
   const router = useRouter();
   const { id } = router.query;
@@ -108,13 +109,8 @@ const TournamentDetails = () => {
     
     // If tournament is finalized, no edits allowed
     if (tournament?.complete) return false;
-    
-    // If knockout has started, group stage matches cannot be updated
-    if (matchToUpdate.stage === 'group' && hasKnockoutStarted()) {
-      return false;
-    }
-    
-    // Group matches can be updated if knockout hasn't started
+
+    // Group stage matches can always be updated (including after knockout has started)
     if (matchToUpdate.stage === 'group') {
       return true;
     }
@@ -137,7 +133,7 @@ const TournamentDetails = () => {
     }
     
     return true;
-  }, [tournament?.complete, hasKnockoutStarted, getKnockoutMatches]);
+  }, [tournament?.complete, getKnockoutMatches]);
 
   // Get group standings
   const getGroupStandings = useCallback((): { [groupId: string]: GroupStanding[] } => {
@@ -1128,22 +1124,45 @@ const TournamentDetails = () => {
     }
   }, [tournament?.bracket, id, canUpdateMatch, updateTournament]);
 
+  const handleUpdateKnockoutMatchPlayers = useCallback(async (matchId: string, player1: Player | null, player2: Player | null): Promise<void> => {
+    if (!tournament?.bracket || !matchId || !id || typeof id !== 'string') return;
+    const matchToUpdate = tournament.bracket.find(m => m?.id === matchId);
+    if (!matchToUpdate || matchToUpdate.stage !== 'knockout') return;
+    if (!canUpdateMatch(matchToUpdate)) {
+      alert('Cannot change players for this match because future matches have already been completed.');
+      return;
+    }
+    try {
+      const updatedBracket = tournament.bracket.map((m: Match) =>
+        m?.id === matchId
+          ? {
+              ...m,
+              player1: player1 ?? m.player1,
+              player2: player2 ?? undefined,
+              winnerId: undefined,
+              complete: false,
+              player1Points: 0,
+              player2Points: 0,
+            }
+          : m
+      ).filter(Boolean) as Match[];
+      const cleanedBracket = cleanupAndValidateBracket(updatedBracket);
+      await updateTournament(cleanedBracket);
+      setTournament(prev => (prev ? { ...prev, bracket: cleanedBracket } : null));
+    } catch (error) {
+      console.error('Error updating knockout match players:', error);
+    }
+  }, [tournament?.bracket, id, canUpdateMatch, updateTournament]);
+
   const renderGroupStage = useMemo(() => {
     const groupMatches = getGroupStageMatches();
     const groupStandings = getGroupStandings();
-    const knockoutStarted = hasKnockoutStarted();
 
     return (
       <Box>
         <Typography variant="h5" gutterBottom>
           Group Stage
         </Typography>
-        
-        {knockoutStarted && (
-          <Alert severity="info" sx={{ mb: 2 }}>
-            Group stage editing is disabled because the knockout stage has started.
-          </Alert>
-        )}
         
         {Object.entries(groupStandings).map(([groupId, standings]) => (
           <Card key={groupId} sx={{ mb: 3 }}>
@@ -1193,7 +1212,7 @@ const TournamentDetails = () => {
         ))}
       </Box>
     );
-  }, [getGroupStageMatches, getGroupStandings, hasKnockoutStarted, handleUpdateMatch, canUpdateMatch, tournament?.bracket]);
+  }, [getGroupStageMatches, getGroupStandings, handleUpdateMatch, canUpdateMatch, tournament?.bracket]);
   
   const renderKnockoutStage = useMemo(() => {
     const knockoutMatches = getKnockoutMatches();
@@ -1291,14 +1310,75 @@ const TournamentDetails = () => {
             )}
             
             {knockoutMatches.map(match => {
-              // Show placeholder for matches without players
+              // Show placeholder for matches without players, with "Add players" form when tournament not finalized
               if (!match?.player1 && !match?.player2) {
+                const showForm = !tournament?.complete && match?.id && emptyMatchAddForm?.matchId === match.id;
+                const players = tournament?.players ?? [];
                 return (
-                  <Card key={match?.id || Math.random()} variant="outlined" sx={{ mb: 1, opacity: 0.5 }}>
+                  <Card key={match?.id || Math.random()} variant="outlined" sx={{ mb: 1, opacity: showForm ? 1 : 0.5 }}>
                     <CardContent sx={{ py: 1 }}>
                       <Typography variant="body2" color="textSecondary">
                         Round {match?.round}: Waiting for players...
                       </Typography>
+                      {!tournament?.complete && match?.id && players.length > 0 && (
+                        <>
+                          {!showForm ? (
+                            <Button
+                              size="small"
+                              variant="outlined"
+                              sx={{ mt: 1 }}
+                              onClick={() => setEmptyMatchAddForm({ matchId: match.id!, p1Id: '', p2Id: '' })}
+                            >
+                              Add players
+                            </Button>
+                          ) : (
+                            <Box sx={{ mt: 2, p: 1, border: '1px solid #eee', borderRadius: 1 }}>
+                              <Typography variant="caption" display="block" gutterBottom>Add players to this match</Typography>
+                              <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap', mb: 1 }}>
+                                <label>
+                                  <Typography variant="caption" sx={{ mr: 0.5 }}>Player 1:</Typography>
+                                  <select
+                                    value={emptyMatchAddForm.p1Id}
+                                    onChange={(e) => setEmptyMatchAddForm(prev => prev ? { ...prev, p1Id: e.target.value } : null)}
+                                    style={{ minWidth: 140, padding: '4px' }}
+                                  >
+                                    <option value="">— Select —</option>
+                                    {players.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                                  </select>
+                                </label>
+                                <label>
+                                  <Typography variant="caption" sx={{ mr: 0.5 }}>Player 2:</Typography>
+                                  <select
+                                    value={emptyMatchAddForm.p2Id}
+                                    onChange={(e) => setEmptyMatchAddForm(prev => prev ? { ...prev, p2Id: e.target.value } : null)}
+                                    style={{ minWidth: 140, padding: '4px' }}
+                                  >
+                                    <option value="">— Bye —</option>
+                                    {players.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                                  </select>
+                                </label>
+                              </Box>
+                              <Box sx={{ display: 'flex', gap: 1 }}>
+                                <Button
+                                  size="small"
+                                  variant="contained"
+                                  disabled={!emptyMatchAddForm.p1Id}
+                                  onClick={() => {
+                                    if (!emptyMatchAddForm?.matchId) return;
+                                    const p1 = emptyMatchAddForm.p1Id ? players.find(p => p.id === emptyMatchAddForm.p1Id) ?? null : null;
+                                    const p2 = emptyMatchAddForm.p2Id ? players.find(p => p.id === emptyMatchAddForm.p2Id) ?? null : null;
+                                    if (p1) handleUpdateKnockoutMatchPlayers(emptyMatchAddForm.matchId, p1, p2);
+                                    setEmptyMatchAddForm(null);
+                                  }}
+                                >
+                                  Submit
+                                </Button>
+                                <Button size="small" variant="outlined" onClick={() => setEmptyMatchAddForm(null)}>Cancel</Button>
+                              </Box>
+                            </Box>
+                          )}
+                        </>
+                      )}
                     </CardContent>
                   </Card>
                 );
@@ -1314,6 +1394,12 @@ const TournamentDetails = () => {
                     onUpdateMatch={handleUpdateMatch}
                     canUpdate={canUpdateMatch(match)}
                     allMatches={tournament?.bracket || []}
+                    onChangeKnockoutPlayers={
+                      match?.stage === 'knockout' && !tournament?.complete
+                        ? (p1, p2) => handleUpdateKnockoutMatchPlayers(match.id!, p1, p2)
+                        : undefined
+                    }
+                    allPlayers={tournament?.players ?? []}
                   />
                 </Box>
               );
@@ -1322,7 +1408,7 @@ const TournamentDetails = () => {
         )}
       </Box>
     );
-  }, [getKnockoutMatches, getQualifiedKnockoutPlayers, tournament?.complete, handleUpdateMatch, canUpdateMatch, tournament?.bracket]);
+  }, [getKnockoutMatches, getQualifiedKnockoutPlayers, tournament?.complete, handleUpdateMatch, canUpdateMatch, tournament?.bracket, tournament?.players, emptyMatchAddForm, handleUpdateKnockoutMatchPlayers]);
 
   if (!id || typeof id !== 'string') {
     return null;
@@ -1517,11 +1603,16 @@ const MatchCard: React.FC<{
   match: Match; 
   onUpdateMatch: (id: string, winnerId: string, p1Points: number, p2Points: number) => void;
   canUpdate?: boolean;
-  allMatches?: Match[]; // Add this prop to access all matches for checking feeder matches
-}> = ({ match, onUpdateMatch, canUpdate = true, allMatches = [] }) => {
+  allMatches?: Match[];
+  onChangeKnockoutPlayers?: (player1: Player | null, player2: Player | null) => void;
+  allPlayers?: Player[];
+}> = ({ match, onUpdateMatch, canUpdate = true, allMatches = [], onChangeKnockoutPlayers, allPlayers = [] }) => {
   const [player1Points, setPlayer1Points] = useState(0);
   const [player2Points, setPlayer2Points] = useState(0);
   const [showScoreInput, setShowScoreInput] = useState(false);
+  const [showChangePlayers, setShowChangePlayers] = useState(false);
+  const [changeP1Id, setChangeP1Id] = useState('');
+  const [changeP2Id, setChangeP2Id] = useState('');
 
   useEffect(() => {
     if (match) {
@@ -1575,6 +1666,42 @@ const MatchCard: React.FC<{
             <Typography variant="caption" color="textSecondary">
               Waiting for opponent...
             </Typography>
+            {canUpdate && onChangeKnockoutPlayers && allPlayers.length > 0 && (
+              <>
+                <button
+                  type="button"
+                  style={{ marginTop: 8, padding: '4px 8px', fontSize: '12px', border: '1px solid #ccc', borderRadius: '4px', cursor: 'pointer' }}
+                  onClick={() => { setChangeP1Id(match.player1?.id ?? ''); setChangeP2Id(''); setShowChangePlayers(true); }}
+                >
+                  Change players
+                </button>
+                {showChangePlayers && (
+                  <Box sx={{ mt: 2, p: 1, border: '1px solid #eee', borderRadius: 1 }}>
+                    <Typography variant="caption" display="block" gutterBottom>Change players</Typography>
+                    <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap', mb: 1 }}>
+                      <label>
+                        <Typography variant="caption" sx={{ mr: 0.5 }}>Player 1:</Typography>
+                        <select value={changeP1Id} onChange={(e) => setChangeP1Id(e.target.value)} style={{ minWidth: 140, padding: '4px' }}>
+                          <option value="">— Select —</option>
+                          {allPlayers.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                        </select>
+                      </label>
+                      <label>
+                        <Typography variant="caption" sx={{ mr: 0.5 }}>Player 2:</Typography>
+                        <select value={changeP2Id} onChange={(e) => setChangeP2Id(e.target.value)} style={{ minWidth: 140, padding: '4px' }}>
+                          <option value="">— Bye —</option>
+                          {allPlayers.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                        </select>
+                      </label>
+                    </Box>
+                    <Box sx={{ display: 'flex', gap: 1 }}>
+                      <button type="button" style={{ padding: '4px 8px', fontSize: '12px' }} onClick={() => { const p1 = changeP1Id ? allPlayers.find(p => p.id === changeP1Id) ?? null : null; const p2 = changeP2Id ? allPlayers.find(p => p.id === changeP2Id) ?? null : null; if (p1) onChangeKnockoutPlayers(p1, p2); setShowChangePlayers(false); }} disabled={!changeP1Id}>Submit</button>
+                      <button type="button" style={{ padding: '4px 8px', fontSize: '12px' }} onClick={() => setShowChangePlayers(false)}>Cancel</button>
+                    </Box>
+                  </Box>
+                )}
+              </>
+            )}
           </CardContent>
         </Card>
       );
@@ -1588,6 +1715,42 @@ const MatchCard: React.FC<{
           <Typography>
             {byeLabel} (BYE)
           </Typography>
+          {canUpdate && onChangeKnockoutPlayers && allPlayers.length > 0 && (
+            <>
+              <button
+                type="button"
+                style={{ marginTop: 8, padding: '4px 8px', fontSize: '12px', border: '1px solid #ccc', borderRadius: '4px', cursor: 'pointer' }}
+                onClick={() => { setChangeP1Id(match.player1?.id ?? ''); setChangeP2Id(''); setShowChangePlayers(true); }}
+              >
+                Change players
+              </button>
+              {showChangePlayers && (
+                <Box sx={{ mt: 2, p: 1, border: '1px solid #eee', borderRadius: 1 }}>
+                  <Typography variant="caption" display="block" gutterBottom>Change players</Typography>
+                  <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap', mb: 1 }}>
+                    <label>
+                      <Typography variant="caption" sx={{ mr: 0.5 }}>Player 1:</Typography>
+                      <select value={changeP1Id} onChange={(e) => setChangeP1Id(e.target.value)} style={{ minWidth: 140, padding: '4px' }}>
+                        <option value="">— Select —</option>
+                        {allPlayers.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                      </select>
+                    </label>
+                    <label>
+                      <Typography variant="caption" sx={{ mr: 0.5 }}>Player 2:</Typography>
+                      <select value={changeP2Id} onChange={(e) => setChangeP2Id(e.target.value)} style={{ minWidth: 140, padding: '4px' }}>
+                        <option value="">— Bye —</option>
+                        {allPlayers.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                      </select>
+                    </label>
+                  </Box>
+                  <Box sx={{ display: 'flex', gap: 1 }}>
+                    <button type="button" style={{ padding: '4px 8px', fontSize: '12px' }} onClick={() => { const p1 = changeP1Id ? allPlayers.find(p => p.id === changeP1Id) ?? null : null; const p2 = changeP2Id ? allPlayers.find(p => p.id === changeP2Id) ?? null : null; if (p1) onChangeKnockoutPlayers(p1, p2); setShowChangePlayers(false); }} disabled={!changeP1Id}>Submit</button>
+                    <button type="button" style={{ padding: '4px 8px', fontSize: '12px' }} onClick={() => setShowChangePlayers(false)}>Cancel</button>
+                  </Box>
+                </Box>
+              )}
+            </>
+          )}
         </CardContent>
       </Card>
     );
@@ -1642,8 +1805,78 @@ const MatchCard: React.FC<{
             >
               {match.complete ? 'Edit' : 'Enter Score'}
             </button>
+            {match.stage === 'knockout' && canUpdate && onChangeKnockoutPlayers && allPlayers.length > 0 && (
+              <button
+                type="button"
+                style={{
+                  padding: '4px 8px',
+                  fontSize: '12px',
+                  border: '1px solid #ccc',
+                  borderRadius: '4px',
+                  backgroundColor: 'white',
+                  cursor: 'pointer'
+                }}
+                onClick={() => {
+                  setChangeP1Id(match.player1?.id ?? '');
+                  setChangeP2Id(match.player2?.id ?? '');
+                  setShowChangePlayers(true);
+                }}
+              >
+                Change players
+              </button>
+            )}
           </Box>
         </Box>
+
+        {showChangePlayers && onChangeKnockoutPlayers && allPlayers.length > 0 && (
+          <Box sx={{ mt: 2, p: 1, border: '1px solid #eee', borderRadius: 1 }}>
+            <Typography variant="caption" display="block" gutterBottom>Change players</Typography>
+            <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap', mb: 1 }}>
+              <label>
+                <Typography variant="caption" sx={{ mr: 0.5 }}>Player 1:</Typography>
+                <select
+                  value={changeP1Id}
+                  onChange={(e) => setChangeP1Id(e.target.value)}
+                  style={{ minWidth: 140, padding: '4px' }}
+                >
+                  <option value="">— Select —</option>
+                  {allPlayers.map(p => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <Typography variant="caption" sx={{ mr: 0.5 }}>Player 2:</Typography>
+                <select
+                  value={changeP2Id}
+                  onChange={(e) => setChangeP2Id(e.target.value)}
+                  style={{ minWidth: 140, padding: '4px' }}
+                >
+                  <option value="">— Bye —</option>
+                  {allPlayers.map(p => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
+              </label>
+            </Box>
+            <Box sx={{ display: 'flex', gap: 1 }}>
+              <button
+                type="button"
+                style={{ padding: '4px 8px', fontSize: '12px' }}
+                onClick={() => {
+                  const p1 = changeP1Id ? allPlayers.find(p => p.id === changeP1Id) ?? null : null;
+                  const p2 = changeP2Id ? allPlayers.find(p => p.id === changeP2Id) ?? null : null;
+                  if (p1) onChangeKnockoutPlayers(p1, p2);
+                  setShowChangePlayers(false);
+                }}
+                disabled={!changeP1Id}
+              >
+                Submit
+              </button>
+              <button type="button" style={{ padding: '4px 8px', fontSize: '12px' }} onClick={() => setShowChangePlayers(false)}>Cancel</button>
+            </Box>
+          </Box>
+        )}
 
         {showScoreInput && canUpdate && (
           <Box sx={{ mt: 2, display: 'flex', gap: 1, alignItems: 'center' }}>
