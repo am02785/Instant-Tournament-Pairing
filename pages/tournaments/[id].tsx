@@ -15,6 +15,7 @@ import {
 } from '@mui/material';
 import { useRouter } from 'next/router';
 import { generateKnockoutPairs, generateKnockoutFirstRoundWorldCup, type QualifiedWithGroupInfo } from 'utils/pairingLogic';
+import { applyKnockoutAdvancement, hasIncompleteFeeders } from 'utils/knockoutAdvancement';
 import { Match, Player, Tournament } from 'types';
 import Layout from '@components/Layout';
 
@@ -369,13 +370,14 @@ const TournamentDetails = () => {
 
       console.log(`Generated ${allKnockoutMatches.length} knockout matches across ${totalRounds} rounds`);
 
-      // Clean the entire bracket before updating
+      // Clean the entire bracket, then auto-advance any first-round BYEs into later rounds
       const cleanedBracket = [...tournament.bracket.map(cleanObject), ...allKnockoutMatches];
+      const { bracket: advancedBracket } = applyKnockoutAdvancement(cleanedBracket);
 
-      await updateTournament(cleanedBracket);
+      await updateTournament(advancedBracket);
 
       // Update local state instead of refetching
-      setTournament(prev => prev ? { ...prev, bracket: cleanedBracket } : null);
+      setTournament(prev => prev ? { ...prev, bracket: advancedBracket } : null);
     } catch (error) {
       console.error('Error generating knockout matches:', error);
       alert('Error generating knockout matches. Please try again.');
@@ -933,114 +935,41 @@ const TournamentDetails = () => {
     }
 
     try {
-      const knockoutMatches = currentTournament.bracket.filter(match => match && match.stage === 'knockout') || [];
-      
-      if (knockoutMatches.length === 0) {
+      const { bracket: advancedBracket, changed } = applyKnockoutAdvancement(currentTournament.bracket);
+      if (!changed) {
         return null;
       }
 
-      // Find completed matches that have winners and future matches
-      const completedMatches = knockoutMatches.filter(m => 
-        m?.complete && m?.winnerId && m?.futureMatchId
-      );
-
-      if (completedMatches.length === 0) {
-        return null;
-      }
-
-      // Find matches that need players (empty slots that should be filled)
-      const matchesNeedingPlayers = knockoutMatches.filter(match => 
-        match && 
-        match.stage === 'knockout' && 
-        (!match.player1 || !match.player2) && // Has empty slots
-        completedMatches.some(cm => cm.futureMatchId === match.id) // Has completed feeders
-      );
-
-      if (matchesNeedingPlayers.length === 0) {
-        // No matches need advancement
-        return null;
-      }
-
-      let hasUpdates = false;
-      const updatedBracket = currentTournament.bracket.map(match => {
-        if (!match || match.stage !== 'knockout') return match;
-
-        // Only process matches that need players
-        if (!matchesNeedingPlayers.some(m => m.id === match.id)) {
-          return match;
-        }
-
-        // Find completed matches that feed into this match
-        const feedingMatches = completedMatches.filter(cm => cm.futureMatchId === match.id);
-        
-        if (feedingMatches.length === 0) return match;
-
-        let updatedMatch = { ...match };
-        let matchChanged = false;
-
-        // Clear existing players if we have feeding matches (to avoid conflicts)
-        if (feedingMatches.length > 0) {
-          Object.assign(updatedMatch, {
-            player1: undefined,
-            player2: undefined,
-            complete: false,
-            winnerId: undefined,
-            player1Points: 0,
-            player2Points: 0
-          });
-          matchChanged = true;
-        }
-
-        feedingMatches.forEach(completedMatch => {
-          if (!completedMatch.winnerId) return;
-
-          // Find the winner player object
-          const winner = completedMatch.player1?.id === completedMatch.winnerId 
-            ? completedMatch.player1 
-            : completedMatch.player2;
-
-          if (!winner?.id) return;
-
-          // Check if this winner is already assigned to this match
-          const winnerAlreadyAssigned = updatedMatch.player1?.id === winner.id || updatedMatch.player2?.id === winner.id;
-          
-          if (winnerAlreadyAssigned) {
-            return;
-          }
-
-          // Determine which slot to place the winner in
-          if (!updatedMatch.player1) {
-            updatedMatch.player1 = winner;
-            matchChanged = true;
-          } else if (!updatedMatch.player2) {
-            updatedMatch.player2 = winner;
-            matchChanged = true;
-          }
-        });
-
-        if (matchChanged) {
-          hasUpdates = true;
-          return updatedMatch;
-        }
-
-        return match;
-      });
-
-      // Clean up and validate the bracket before updating
-      const cleanedBracket = cleanupAndValidateBracket(updatedBracket);
-
-      // Only update if there were changes
-      if (hasUpdates) {
-        await updateTournament(cleanedBracket);
-        return cleanedBracket;
-      } else {
-        return null;
-      }
+      const cleanedBracket = cleanupAndValidateBracket(advancedBracket);
+      await updateTournament(cleanedBracket);
+      return cleanedBracket;
     } catch (error) {
       console.error('Error in autoAdvanceKnockoutRound:', error);
       return null;
     }
-  };  
+  };
+
+  // Repair incomplete knockout BYEs (e.g. a round-2 player with no opponent) on load
+  useEffect(() => {
+    if (loading || !tournament?.bracket || tournament.complete) return;
+
+    const { changed } = applyKnockoutAdvancement(tournament.bracket);
+    if (!changed) return;
+
+    let cancelled = false;
+    (async () => {
+      const result = await autoAdvanceKnockoutRound(tournament);
+      if (!cancelled && result) {
+        setTournament(prev => prev ? { ...prev, bracket: result } : null);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // Only run when the tournament is fetched or finalized — match updates already call auto-advance
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, tournament?.id, tournament?.complete]);
   
   const handleUpdateMatch = useCallback(async (matchId: string, winnerId: string, player1Points: number, player2Points: number): Promise<void> => {
     if (!tournament?.bracket || !matchId || !id || typeof id !== 'string') {
@@ -1556,15 +1485,10 @@ const MatchCard: React.FC<{
   }
 
   if (!match.player2) {
-    // Check if this is a knockout match that's waiting for a player to advance
-    // This happens when it's a knockout match in round > 1 AND there are other matches that should feed into this one
-    const isWaitingForAdvancement = match.stage === 'knockout' && match.round > 1 && match.futureMatchId === null;
-    
-    // Additionally, check if there are any matches that have this match as their futureMatchId
     const knockoutMatches = allMatches.filter((m: Match) => m && m.stage === 'knockout');
-    const hasFeederMatches = knockoutMatches.some((m: Match) => m.futureMatchId === match.id && !m.complete);
-    
-    if (isWaitingForAdvancement || (match.stage === 'knockout' && hasFeederMatches)) {
+    const waitingForOpponent = match.stage === 'knockout' && hasIncompleteFeeders(match, knockoutMatches);
+
+    if (waitingForOpponent) {
       const p1Label = (match.player1.name || 'Unknown Player') + formatPlayerGroupPlace(match.player1GroupId, match.player1GroupPlace);
       return (
         <Card variant="outlined" sx={{ mb: 1, opacity: 0.7 }}>
@@ -1580,14 +1504,39 @@ const MatchCard: React.FC<{
       );
     }
     
-    // This is a true bye (first round with odd number of players)
     const byeLabel = (match.player1.name || 'Unknown Player') + formatPlayerGroupPlace(match.player1GroupId, match.player1GroupPlace);
     return (
       <Card variant="outlined" sx={{ mb: 1 }}>
         <CardContent sx={{ py: 1 }}>
-          <Typography>
-            {byeLabel} (BYE)
-          </Typography>
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 1 }}>
+            <Box>
+              <Typography>
+                {byeLabel} (BYE)
+              </Typography>
+              {match.complete && match.winnerId && (
+                <Typography variant="caption" color="success.main">
+                  Winner: {match.player1.name} (advances automatically)
+                </Typography>
+              )}
+            </Box>
+            {!match.complete && canUpdate && (
+              <button
+                type="button"
+                style={{
+                  padding: '4px 8px',
+                  fontSize: '12px',
+                  border: '1px solid #ccc',
+                  borderRadius: '4px',
+                  backgroundColor: 'white',
+                  cursor: 'pointer'
+                }}
+                onClick={handleSubmitScore}
+                disabled={!match.id}
+              >
+                Advance
+              </button>
+            )}
+          </Box>
         </CardContent>
       </Card>
     );
