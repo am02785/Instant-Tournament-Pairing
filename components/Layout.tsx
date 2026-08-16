@@ -26,7 +26,7 @@ export default function Layout({ children, user }: LayoutProps) {
         { label: 'Home', path: '/' },
         { label: 'Tournaments', path: '/tournaments' },
         { label: 'Create Tournament', path: '/create-tournament' },
-        { label: 'Create Player', path: '/create-player' },
+        { label: 'Players', path: '/players' },
         { label: 'Sign Out', path: '/signout' },
       ]
     : [
