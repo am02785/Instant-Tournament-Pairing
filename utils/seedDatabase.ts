@@ -1,13 +1,14 @@
-// Updated to use API route instead of direct Firebase access
-
-export async function seedDatabase(playerCount: number = 15): Promise<{ success: boolean; message?: string; error?: string; tournamentId?: string }> {
+export async function seedDatabase(
+  playerCount: number = 15,
+  type: 'worldcup' | 'royale' = 'worldcup'
+): Promise<{ success: boolean; message?: string; error?: string; tournamentId?: string }> {
   try {
     const response = await fetch('/api/seed', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ playerCount }),
+      body: JSON.stringify({ playerCount, type }),
     });
 
     const data = await response.json();

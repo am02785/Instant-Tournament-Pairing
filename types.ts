@@ -5,6 +5,8 @@ export type Player = {
   seed?: number;
 };
 
+export type TournamentType = 'worldcup' | 'royale';
+
 export type Match = {
   id?: string;
   player1: Player;
@@ -14,7 +16,8 @@ export type Match = {
   winnerId?: string;
   round: number;
   complete?: boolean;
-  stage: 'group' | 'knockout'; // Added stage identifier
+  completedAt?: string;
+  stage: 'group' | 'knockout' | 'royale';
   groupId?: string; // For group stage matches
   futureMatchId?: string | null; // ID of the match this winner advances to (null for group stage or final)
   // Knockout first round: which group/place each player came from (for display)
@@ -35,4 +38,7 @@ export type Tournament = {
   complete?: boolean;
   createdAt?: any; // For Firestore timestamp
   finalRankings?: { player: Player; rank: number; points: number }[];
+  type?: TournamentType;
+  /** Ranked player IDs at creation (index 0 = rank 1). Current standings are derived from this plus results. */
+  initialLadder?: string[];
 };

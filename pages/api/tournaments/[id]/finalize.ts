@@ -41,8 +41,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       if (playerDoc.exists()) {
         const currentData = playerDoc.data();
         const oldSeed = currentData?.seed;
-        // Use adjustedSeed as the new seed (this is the seed after adjustment)
-        const newSeed = ranking.adjustedSeed ?? ranking.rank;
+        if (typeof ranking.adjustedSeed !== 'number') {
+          continue;
+        }
+        const newSeed = ranking.adjustedSeed;
         
         if (oldSeed !== newSeed) {
           batch.update(playerRef, {

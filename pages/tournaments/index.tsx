@@ -7,6 +7,7 @@ import {
   Grid,
   Button,
   Box,
+  Chip,
 } from '@mui/material';
 import Link from 'next/link';
 // Layout is now handled by _app.tsx
@@ -15,6 +16,7 @@ interface Tournament {
   id: string;
   name: string;
   createdAt: string;
+  type?: 'worldcup' | 'royale';
 }
 
 export default function Tournaments() {
@@ -60,6 +62,12 @@ export default function Tournaments() {
                   <Typography variant="h6" gutterBottom>
                     {tournament.name}
                   </Typography>
+                  <Chip
+                    label={tournament.type === 'royale' ? 'Royale' : 'World Cup'}
+                    size="small"
+                    color={tournament.type === 'royale' ? 'secondary' : 'primary'}
+                    sx={{ mb: 1, alignSelf: 'flex-start' }}
+                  />
                   <Typography variant="body2" color="text.secondary" sx={{ mb: 2, flexGrow: 1 }}>
                     Created: {new Date(tournament.createdAt).toLocaleDateString()}
                   </Typography>

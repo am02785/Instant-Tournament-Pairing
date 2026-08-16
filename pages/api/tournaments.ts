@@ -18,19 +18,24 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
   } else if (req.method === 'POST') {
     try {
-      const { name, players, bracket, createdBy } = req.body;
+      const { name, players, bracket, createdBy, type, initialLadder } = req.body;
       
       if (!name || !players || !bracket) {
         return res.status(400).json({ error: 'Name, players, and bracket are required' });
       }
       
-      const tournamentData = {
+      const tournamentData: Record<string, unknown> = {
         name,
         players,
         bracket,
         createdAt: new Date().toISOString(),
-        createdBy: createdBy || null
+        createdBy: createdBy || null,
+        type: type === 'royale' ? 'royale' : 'worldcup',
       };
+
+      if (type === 'royale') {
+        tournamentData.initialLadder = Array.isArray(initialLadder) ? initialLadder : [];
+      }
       
       const docRef = await addDoc(collection(db, 'tournaments'), tournamentData);
       

@@ -1,14 +1,14 @@
 import React from 'react';
 import { Typography, Box, Button } from '@mui/material';
-// Layout is now handled by _app.tsx
 import { seedDatabase } from 'utils/seedDatabase';
 
 const Home = () => {
-  const handleSeedDatabase = async () => {
+  const handleSeedDatabase = async (type: 'worldcup' | 'royale') => {
     try {
-      const result = await seedDatabase(); // Call the seed function
+      const result = await seedDatabase(15, type);
       if (result.success) {
-        alert(`Database seeded successfully! Tournament ID: ${result.tournamentId}`);
+        const label = type === 'royale' ? 'Royale' : 'World Cup';
+        alert(`${label} tournament seeded successfully! Tournament ID: ${result.tournamentId}`);
       } else {
         alert(`Failed to seed database: ${result.error}`);
       }
@@ -24,9 +24,14 @@ const Home = () => {
         Welcome to Instant Tournament Pairing
       </Typography>
       
-      <Button variant="contained" color="primary" onClick={handleSeedDatabase}>
-        Seed Database
-      </Button>
+      <Box sx={{ display: 'flex', gap: 2, justifyContent: 'center', mt: 3 }}>
+        <Button variant="contained" color="primary" onClick={() => handleSeedDatabase('worldcup')}>
+          Seed World Cup
+        </Button>
+        <Button variant="contained" color="secondary" onClick={() => handleSeedDatabase('royale')}>
+          Seed Royale
+        </Button>
+      </Box>
     </Box>
   );
 };

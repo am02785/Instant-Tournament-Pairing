@@ -2,6 +2,7 @@ import { NextApiRequest, NextApiResponse } from 'next';
 import { db } from '../../utils/firebase';
 import { collection, addDoc, getDocs, query } from 'firebase/firestore';
 import { generateOptimalTournament } from '../../utils/pairingLogic';
+import { buildInitialLadder } from '../../utils/royaleLadder';
 
 // Helper to generate dummy players
 function generateDummyPlayers(count: number): any[] {
@@ -33,6 +34,26 @@ function generateDummyPlayers(count: number): any[] {
   });
 }
 
+function generateRoyaleDummyPlayers(count: number): any[] {
+  const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
+  const rankedCount = Math.max(1, Math.round(count * 0.6));
+
+  return Array.from({ length: count }, (_, i) => {
+    const numDays = Math.floor(Math.random() * 3) + 1;
+    const shuffledDays = [...days].sort(() => Math.random() - 0.5);
+    const player: any = {
+      name: `Royale Player ${i + 1}`,
+      officeDays: shuffledDays.slice(0, numDays),
+    };
+
+    if (i < rankedCount) {
+      player.seed = i + 1;
+    }
+
+    return player;
+  });
+}
+
 // Function to clean object of undefined values
 function cleanObject(obj: any): any {
   const cleaned: any = {};
@@ -59,7 +80,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   try {
-    const { playerCount = 15 } = req.body;
+    const { playerCount = 15, type = 'worldcup' } = req.body;
+    const isRoyale = type === 'royale';
     
     // First, check if there are existing players in the database
     const playersQuery = query(collection(db, 'players'));
@@ -70,9 +92,27 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     } as any));
     
     let savedPlayers: any[] = [];
-    
-    // If we have enough existing players, use those
-    if (existingPlayers.length >= playerCount) {
+
+    if (isRoyale) {
+      const newDummyPlayers = generateRoyaleDummyPlayers(playerCount);
+      savedPlayers = await Promise.all(
+        newDummyPlayers.map(async (player) => {
+          const playerData = {
+            name: player.name,
+            officeDays: player.officeDays,
+            seed: player.seed || null,
+            createdAt: new Date().toISOString()
+          };
+
+          const playerDocRef = await addDoc(collection(db, 'players'), playerData);
+
+          return {
+            id: playerDocRef.id,
+            ...playerData
+          };
+        })
+      );
+    } else if (existingPlayers.length >= playerCount) {
       // Use the first playerCount existing players
       savedPlayers = existingPlayers.slice(0, playerCount);
     } else {
@@ -109,6 +149,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       savedPlayers = [...savedPlayers, ...newPlayers];
     }
     
+    let tournamentData: Record<string, unknown>;
+
+    if (isRoyale) {
+      tournamentData = {
+        name: 'Seeded Royale Tournament',
+        players: savedPlayers.map(p => cleanObject(p)),
+        bracket: [],
+        type: 'royale',
+        initialLadder: buildInitialLadder(savedPlayers),
+        createdAt: new Date().toISOString(),
+      };
+    } else {
     const fullBracket = generateOptimalTournament(savedPlayers);
 
     // Only store first round initially (group stage)
@@ -143,12 +195,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         return match;
       });
 
-    const tournamentData = {
+    tournamentData = {
       name: 'Seeded Tournament',
       players: savedPlayers.map(p => cleanObject(p)),
       bracket: firstRoundOnly,
+      type: 'worldcup',
       createdAt: new Date().toISOString(),
     };
+    }
 
     const docRef = await addDoc(collection(db, 'tournaments'), tournamentData);
     

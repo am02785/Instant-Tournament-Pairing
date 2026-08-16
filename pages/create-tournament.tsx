@@ -9,9 +9,15 @@ import {
   Paper,
   Snackbar,
   Alert,
+  FormControl,
+  FormLabel,
+  RadioGroup,
+  Radio,
 } from '@mui/material';
 // Removed Firebase imports - now using API routes
 import { generateOptimalTournament } from 'utils/pairingLogic';
+import { buildInitialLadder } from 'utils/royaleLadder';
+import { TournamentType } from 'types';
 
 interface Player {
   id: string;
@@ -43,6 +49,7 @@ export default function CreateTournament() {
   const [players, setPlayers] = useState<Player[]>([]);
   const [selectedPlayerIds, setSelectedPlayerIds] = useState<string[]>([]);
   const [tournamentName, setTournamentName] = useState('');
+  const [tournamentType, setTournamentType] = useState<TournamentType>('worldcup');
   const [currentUserId, setCurrentUserId] = useState<string | null>('temp-user-id');
   const [openSnackbar, setOpenSnackbar] = useState(false);
   const [snackbarMessage, setSnackbarMessage] = useState('');
@@ -83,10 +90,9 @@ export default function CreateTournament() {
       selectedPlayerIds.includes(player.id)
     );
 
-    // Generate only the group stage matches
-    const groupStageMatches = generateOptimalTournament(selectedPlayers);
+    const isRoyale = tournamentType === 'royale';
+    const groupStageMatches = isRoyale ? [] : generateOptimalTournament(selectedPlayers);
     
-    // Clean the matches and add IDs
     const cleanedMatches = groupStageMatches.map((match, index) => ({
       ...cleanObject({
         id: `match-${Date.now()}-${index}`,
@@ -99,16 +105,20 @@ export default function CreateTournament() {
         player1Points: 0,
         player2Points: 0
       })
-    })).filter(match => match.player2 || match.player1); // Remove any malformed matches
+    })).filter(match => match.player2 || match.player1);
 
-    // Create the tournament using API route
     try {
-      const tournamentData = {
+      const tournamentData: Record<string, unknown> = {
         name: tournamentName,
         players: selectedPlayers.map(p => cleanObject(p)),
         bracket: cleanedMatches,
-        createdBy: currentUserId
+        createdBy: currentUserId,
+        type: tournamentType,
       };
+
+      if (isRoyale) {
+        tournamentData.initialLadder = buildInitialLadder(selectedPlayers);
+      }
 
       const response = await fetch('/api/tournaments', {
         method: 'POST',
@@ -130,6 +140,7 @@ export default function CreateTournament() {
         // Clear the form
         setTournamentName('');
         setSelectedPlayerIds([]);
+        setTournamentType('worldcup');
       } else {
         throw new Error(result.error || 'Failed to create tournament');
       }
@@ -153,6 +164,30 @@ export default function CreateTournament() {
         value={tournamentName}
         onChange={(e) => setTournamentName(e.target.value)}
       />
+      <FormControl sx={{ mb: 3 }}>
+        <FormLabel>Tournament Type</FormLabel>
+        <RadioGroup
+          row
+          value={tournamentType}
+          onChange={(event) => setTournamentType(event.target.value as TournamentType)}
+        >
+          <FormControlLabel
+            value="worldcup"
+            control={<Radio />}
+            label="World Cup (groups + knockout)"
+          />
+          <FormControlLabel
+            value="royale"
+            control={<Radio />}
+            label="Royale (challenge ladder)"
+          />
+        </RadioGroup>
+        {tournamentType === 'royale' && (
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+            Seeded players start ranked in seed order. Unseeded players start unranked and can challenge anyone on the ladder.
+          </Typography>
+        )}
+      </FormControl>
       <Typography variant="h6">Select Players</Typography>
       <Box sx={{ display: 'flex', flexDirection: 'column' }}>
         {players.map((player) => (

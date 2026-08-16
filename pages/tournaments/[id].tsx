@@ -15,9 +15,11 @@ import {
 } from '@mui/material';
 import { useRouter } from 'next/router';
 import { generateKnockoutPairs, generateKnockoutFirstRoundWorldCup, type QualifiedWithGroupInfo } from 'utils/pairingLogic';
-import { applyKnockoutAdvancement, hasIncompleteFeeders } from 'utils/knockoutAdvancement';
+import { applyKnockoutAdvancement } from 'utils/knockoutAdvancement';
+import { calculateRoyaleRankings, isRoyaleTournament } from 'utils/royaleLadder';
 import { Match, Player, Tournament } from 'types';
-import Layout from '@components/Layout';
+import MatchCard from '@components/MatchCard';
+import RoyaleTournament from '@components/RoyaleTournament';
 
 interface GroupStanding {
   player: Player;
@@ -109,6 +111,10 @@ const TournamentDetails = () => {
     
     // If tournament is finalized, no edits allowed
     if (tournament?.complete) return false;
+
+    if (matchToUpdate.stage === 'royale') {
+      return true;
+    }
     
     // If knockout has started, group stage matches cannot be updated
     if (matchToUpdate.stage === 'group' && hasKnockoutStarted()) {
@@ -386,6 +392,8 @@ const TournamentDetails = () => {
 
   // Check if tournament finals are complete
   const isTournamentFinalsComplete = useCallback((): boolean => {
+    if (isRoyaleTournament(tournament)) return true;
+
     const knockoutMatches = getKnockoutMatches();
     if (knockoutMatches.length === 0) return false;
     
@@ -394,10 +402,18 @@ const TournamentDetails = () => {
     const finalMatch = knockoutMatches.find(m => m?.round === finalRound);
     
     return finalMatch?.complete === true && finalMatch?.winnerId != null;
-  }, [getKnockoutMatches]);
+  }, [getKnockoutMatches, tournament]);
 
   // Calculate final tournament rankings
   const calculateTournamentRankings = useCallback((): { player: Player; rank: number; points: number; adjustedSeed?: number }[] => {
+    if (isRoyaleTournament(tournament)) {
+      return calculateRoyaleRankings(
+        tournament?.players || [],
+        tournament?.initialLadder || [],
+        tournament?.bracket || []
+      );
+    }
+
     const rankings: { player: Player; rank: number; points: number; adjustedSeed?: number }[] = [];
     const knockoutMatches = getKnockoutMatches();
     const groupStandings = getGroupStandings();
@@ -952,6 +968,7 @@ const TournamentDetails = () => {
   // Repair incomplete knockout BYEs (e.g. a round-2 player with no opponent) on load
   useEffect(() => {
     if (loading || !tournament?.bracket || tournament.complete) return;
+    if (isRoyaleTournament(tournament)) return;
 
     const { changed } = applyKnockoutAdvancement(tournament.bracket);
     if (!changed) return;
@@ -1002,6 +1019,7 @@ const TournamentDetails = () => {
           player2Points,
           winnerId,
           complete: true,
+          completedAt: m.completedAt || new Date().toISOString(),
         } : m
       ).filter(Boolean);
 
@@ -1056,6 +1074,25 @@ const TournamentDetails = () => {
       console.error('Error updating match:', error);
     }
   }, [tournament?.bracket, id, canUpdateMatch, updateTournament]);
+
+  const handleCreateChallenge = useCallback(async (challenger: Player, opponent: Player): Promise<void> => {
+    if (!tournament || !id || typeof id !== 'string') return;
+
+    const newMatch: Match = {
+      id: generateUUID(),
+      player1: challenger,
+      player2: opponent,
+      round: (tournament.bracket?.length || 0) + 1,
+      stage: 'royale',
+      complete: false,
+      player1Points: 0,
+      player2Points: 0,
+    };
+
+    const updatedBracket = [...(tournament.bracket || []), newMatch];
+    await updateTournament(updatedBracket);
+    setTournament(prev => prev ? { ...prev, bracket: updatedBracket } : null);
+  }, [tournament, id, updateTournament]);
 
   const renderGroupStage = useMemo(() => {
     const groupMatches = getGroupStageMatches();
@@ -1292,7 +1329,11 @@ const TournamentDetails = () => {
               disabled={!isTournamentFinalsComplete()}
               sx={{ ml: 2 }}
             >
-              {isTournamentFinalsComplete() ? 'Finalize Tournament' : 'Complete Finals to Finalize'}
+              {isRoyaleTournament(tournament)
+                ? 'Finalize Tournament'
+                : isTournamentFinalsComplete()
+                  ? 'Finalize Tournament'
+                  : 'Complete Finals to Finalize'}
             </Button>
           )}
           
@@ -1310,13 +1351,16 @@ const TournamentDetails = () => {
         {tournament.complete && (
           <Alert severity="success" sx={{ mb: 3 }}>
             <Typography variant="body1">
-              This tournament has been completed and global player rankings have been updated. Tournament participants are now ranked 1-{calculateTournamentRankings().length}, with other players re-ranked accordingly.
+              {isRoyaleTournament(tournament)
+                ? 'This tournament has been completed. Ranked players’ global seeds were adjusted by finish (+/−), same as World Cup. Players who never made the ladder stay unseeded.'
+                : `This tournament has been completed and global player rankings have been updated. Tournament participants are now ranked 1-${calculateTournamentRankings().length}, with other players re-ranked accordingly.`}
             </Typography>
           </Alert>
         )}
 
         {/* Final Rankings Display */}
         {tournament.complete && (() => {
+          const isRoyale = isRoyaleTournament(tournament);
           const rankings = tournament.finalRankings || calculateTournamentRankings();
           // Sort by tournament position (rank) - 1st, 2nd, 3rd, etc.
           const sortedRankings = [...rankings].sort((a: any, b: any) => {
@@ -1353,10 +1397,17 @@ const TournamentDetails = () => {
               </Typography>
                 {sortedRankings.map((ranking: any, index: number) => {
                   const oldSeed = ranking.player.seed ?? null;
-                  const tournamentRank = ranking.rank; // Tournament performance rank (1st, 2nd, 3rd, etc.)
-                  const adjustedSeed = ranking.adjustedSeed ?? (oldSeed !== null ? oldSeed + getAdjustmentForDisplay(tournamentRank) : getBaseSeedForRankDisplay(tournamentRank));
-                  // Only show adjustment if player had an existing seed
-                  const adjustment = oldSeed !== null ? getAdjustmentForDisplay(tournamentRank) : null;
+                  const tournamentRank = ranking.rank;
+                  const hasAdjustedSeed = typeof ranking.adjustedSeed === 'number';
+                  const adjustedSeed = hasAdjustedSeed
+                    ? ranking.adjustedSeed
+                    : (oldSeed !== null ? oldSeed + getAdjustmentForDisplay(tournamentRank) : getBaseSeedForRankDisplay(tournamentRank));
+                  const stayedUnranked = isRoyale && !hasAdjustedSeed;
+                  const adjustment = stayedUnranked
+                    ? null
+                    : oldSeed !== null
+                      ? (isRoyale ? adjustedSeed - oldSeed : getAdjustmentForDisplay(tournamentRank))
+                      : null;
                   
                   return (
                     <Box 
@@ -1381,6 +1432,12 @@ const TournamentDetails = () => {
                         {tournamentRank === 3 && <Chip label="3rd Place" color="default" size="small" />}
                       </Box>
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                        {stayedUnranked ? (
+                          <Typography variant="body2" color="textSecondary" sx={{ fontStyle: 'italic' }}>
+                            Unranked — seed unchanged
+                          </Typography>
+                        ) : (
+                          <>
                         {oldSeed !== null && (
                           <>
                             <Typography variant="body2" color="textSecondary">
@@ -1407,6 +1464,8 @@ const TournamentDetails = () => {
                             (assigned)
                           </Typography>
                         )}
+                          </>
+                        )}
                       </Box>
                     </Box>
                   );
@@ -1416,6 +1475,14 @@ const TournamentDetails = () => {
           );
         })()}
 
+        {isRoyaleTournament(tournament) ? (
+          <RoyaleTournament
+            tournament={tournament}
+            onUpdateMatch={handleUpdateMatch}
+            onCreateChallenge={handleCreateChallenge}
+            canUpdateMatch={canUpdateMatch}
+          />
+        ) : (
         <Grid container spacing={4}>
           {/* Group Stage Section */}
           <Grid item xs={12} lg={6}>
@@ -1427,208 +1494,8 @@ const TournamentDetails = () => {
             {renderKnockoutStage}
           </Grid>
         </Grid>
+        )}
       </Paper>
-  );
-};
-// Format group/place for knockout display (e.g. "Group 1", "1st")
-const formatGroupLabel = (groupId: string): string => {
-  const part = groupId.replace(/^group-/, '');
-  return part ? `Group ${part}` : groupId;
-};
-const formatPlace = (place: 1 | 2): string => place === 1 ? '1st' : '2nd';
-const formatPlayerGroupPlace = (groupId?: string, place?: 1 | 2): string => {
-  if (groupId == null || place == null) return '';
-  return ` (${formatGroupLabel(groupId)} ${formatPlace(place)})`;
-};
-
-// Match Card Component
-const MatchCard: React.FC<{ 
-  match: Match; 
-  onUpdateMatch: (id: string, winnerId: string, p1Points: number, p2Points: number) => void;
-  canUpdate?: boolean;
-  allMatches?: Match[]; // Add this prop to access all matches for checking feeder matches
-}> = ({ match, onUpdateMatch, canUpdate = true, allMatches = [] }) => {
-  const [player1Points, setPlayer1Points] = useState(0);
-  const [player2Points, setPlayer2Points] = useState(0);
-  const [showScoreInput, setShowScoreInput] = useState(false);
-
-  useEffect(() => {
-    if (match) {
-      setPlayer1Points(match.player1Points || 0);
-      setPlayer2Points(match.player2Points || 0);
-    }
-  }, [match?.player1Points, match?.player2Points]);
-
-  const handleSubmitScore = (): void => {
-    if (!match?.id || !match?.player1?.id) {
-      console.error('Match has no ID or invalid player1:', match);
-      return;
-    }
-
-    if (!match.player2) {
-      onUpdateMatch(match.id, match.player1.id, 1, 0);
-      return;
-    }
-    
-    if (!match.player2.id) {
-      console.error('Player2 is missing ID:', match.player2);
-      return;
-    }
-    
-    const winnerId = player1Points > player2Points ? match.player1.id : match.player2.id;
-    onUpdateMatch(match.id, winnerId, player1Points, player2Points);
-    setShowScoreInput(false);
-  };
-  // Don't render if match is invalid
-  if (!match?.player1?.id) {
-    return null;
-  }
-
-  if (!match.player2) {
-    const knockoutMatches = allMatches.filter((m: Match) => m && m.stage === 'knockout');
-    const waitingForOpponent = match.stage === 'knockout' && hasIncompleteFeeders(match, knockoutMatches);
-
-    if (waitingForOpponent) {
-      const p1Label = (match.player1.name || 'Unknown Player') + formatPlayerGroupPlace(match.player1GroupId, match.player1GroupPlace);
-      return (
-        <Card variant="outlined" sx={{ mb: 1, opacity: 0.7 }}>
-          <CardContent sx={{ py: 1 }}>
-            <Typography variant="body2" color="textSecondary">
-              {p1Label} vs TBD
-            </Typography>
-            <Typography variant="caption" color="textSecondary">
-              Waiting for opponent...
-            </Typography>
-          </CardContent>
-        </Card>
-      );
-    }
-    
-    const byeLabel = (match.player1.name || 'Unknown Player') + formatPlayerGroupPlace(match.player1GroupId, match.player1GroupPlace);
-    return (
-      <Card variant="outlined" sx={{ mb: 1 }}>
-        <CardContent sx={{ py: 1 }}>
-          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 1 }}>
-            <Box>
-              <Typography>
-                {byeLabel} (BYE)
-              </Typography>
-              {match.complete && match.winnerId && (
-                <Typography variant="caption" color="success.main">
-                  Winner: {match.player1.name} (advances automatically)
-                </Typography>
-              )}
-            </Box>
-            {!match.complete && canUpdate && (
-              <button
-                type="button"
-                style={{
-                  padding: '4px 8px',
-                  fontSize: '12px',
-                  border: '1px solid #ccc',
-                  borderRadius: '4px',
-                  backgroundColor: 'white',
-                  cursor: 'pointer'
-                }}
-                onClick={handleSubmitScore}
-                disabled={!match.id}
-              >
-                Advance
-              </button>
-            )}
-          </Box>
-        </CardContent>
-      </Card>
-    );
-  }
-
-  return (
-    <Card variant="outlined" sx={{ mb: 1 }}>
-      <CardContent sx={{ py: 1 }}>
-        {!canUpdate && (
-          <Alert severity="warning" sx={{ mb: 1, py: 0 }}>
-            Cannot edit - future matches completed
-          </Alert>
-        )}
-        
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <Box>
-            <Typography variant="body2">
-              {(match.player1?.name || 'Unknown') + formatPlayerGroupPlace(match.player1GroupId, match.player1GroupPlace)} vs {(match.player2?.name || 'Unknown') + formatPlayerGroupPlace(match.player2GroupId, match.player2GroupPlace)}
-            </Typography>
-            {match.complete && (
-              <Typography variant="caption" color="success.main">
-                Winner: {match.player1?.id === match.winnerId ? (match.player1?.name || 'Unknown') : (match.player2?.name || 'Unknown')}
-                {match.player1Points !== undefined && ` (${match.player1Points}-${match.player2Points})`}
-              </Typography>
-            )}
-            {match.stage === 'knockout' && match.futureMatchId && (
-              <Typography variant="caption" color="textSecondary" sx={{ display: 'block' }}>
-                Winner advances to next round
-              </Typography>
-            )}
-          </Box>
-          
-          <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
-            {match.complete && (
-              <Typography variant="body2" color="textSecondary">
-                {match.player1Points}-{match.player2Points}
-              </Typography>
-            )}
-            <button
-              type="button"
-              style={{
-                padding: '4px 8px',
-                fontSize: '12px',
-                border: '1px solid #ccc',
-                borderRadius: '4px',
-                backgroundColor: !canUpdate ? '#f0f0f0' : match.complete ? '#f5f5f5' : 'white',
-                cursor: canUpdate ? 'pointer' : 'not-allowed',
-                opacity: canUpdate ? 1 : 0.6
-              }}
-              onClick={() => canUpdate && setShowScoreInput(true)}
-              disabled={!match.id || !canUpdate}
-            >
-              {match.complete ? 'Edit' : 'Enter Score'}
-            </button>
-          </Box>
-        </Box>
-
-        {showScoreInput && canUpdate && (
-          <Box sx={{ mt: 2, display: 'flex', gap: 1, alignItems: 'center' }}>
-            <Typography variant="body2">{match.player1?.name || 'Player 1'}:</Typography>
-            <input
-              type="number"
-              value={player1Points}
-              onChange={(e) => setPlayer1Points(parseInt(e.target.value) || 0)}
-              style={{ width: '60px', padding: '4px' }}
-            />
-            <Typography variant="body2">{match.player2?.name || 'Player 2'}:</Typography>
-            <input
-              type="number"
-              value={player2Points}
-              onChange={(e) => setPlayer2Points(parseInt(e.target.value) || 0)}
-              style={{ width: '60px', padding: '4px' }}
-            />
-            <button
-              type="button"
-              style={{ padding: '4px 8px', fontSize: '12px' }}
-              onClick={handleSubmitScore}
-              disabled={!match.id}
-            >
-              Submit
-            </button>
-            <button
-              type="button"
-              style={{ padding: '4px 8px', fontSize: '12px' }}
-              onClick={() => setShowScoreInput(false)}
-            >
-              Cancel
-            </button>
-          </Box>
-        )}
-      </CardContent>
-    </Card>
   );
 };
 
