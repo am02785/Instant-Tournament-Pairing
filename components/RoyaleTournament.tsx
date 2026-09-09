@@ -213,11 +213,7 @@ const RoyaleTournament: React.FC<RoyaleTournamentProps> = ({
                 ? getRematchStatus(match.player1.id, match.player2.id, matches)
                 : null;
               const rematchLabel = rematch
-                ? formatRematchProgress(
-                    rematch,
-                    match.player1.name || 'Player 1',
-                    match.player2?.name || 'Player 2'
-                  )
+                ? formatRematchProgress(rematch, match.player1.name || 'Challenger')
                 : null;
 
               return (
@@ -231,7 +227,7 @@ const RoyaleTournament: React.FC<RoyaleTournamentProps> = ({
                   {rematch && rematchLabel && (
                     <Typography variant="caption" color="text.secondary" sx={{ display: 'block', ml: 1, mb: 1 }}>
                       {rematch.blocked
-                        ? `${rematchLabel} before they can play again`
+                        ? `${rematchLabel} before rematching`
                         : rematchLabel}
                     </Typography>
                   )}
@@ -247,7 +243,7 @@ const RoyaleTournament: React.FC<RoyaleTournamentProps> = ({
         <DialogContent>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
             The challenger must be ranked below the opponent, or unranked. After two players meet,
-            each must face 2 other opponents before they can rematch.
+            the challenger must face 2 other opponents before rematching that player.
           </Typography>
           <FormControl fullWidth sx={{ mt: 1, mb: 2 }}>
             <InputLabel id="challenger-label">Challenger</InputLabel>
@@ -277,14 +273,8 @@ const RoyaleTournament: React.FC<RoyaleTournamentProps> = ({
               ) : (
                 <List>
                   {opponentOptions.map((option) => {
-                    const rematchLabel = formatRematchProgress(
-                      option.rematch,
-                      challenger.name,
-                      option.player.name
-                    );
-                    const remaining = option.rematch.blocked
-                      ? Math.max(option.rematch.remainingA, option.rematch.remainingB)
-                      : 0;
+                    const rematchLabel = formatRematchProgress(option.rematch, challenger.name);
+                    const remaining = option.rematch.blocked ? option.rematch.remaining : 0;
                     const secondary = option.eligible
                       ? rematchLabel || 'Eligible'
                       : [option.reason, rematchLabel].filter(Boolean).join(' — ');

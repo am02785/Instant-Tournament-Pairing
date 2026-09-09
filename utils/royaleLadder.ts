@@ -6,8 +6,8 @@ export const REMATCH_OTHERS_REQUIRED = 2;
 export type RematchStatus = {
   hasPlayed: boolean;
   required: number;
-  remainingA: number;
-  remainingB: number;
+  /** Other opponents the challenger still needs before rematching this player. */
+  remaining: number;
   blocked: boolean;
 };
 
@@ -164,19 +164,19 @@ export function hasPendingMatch(matches: Match[], playerAId: string, playerBId: 
 }
 
 /**
- * After A and B play, they cannot rematch until each has completed matches against
- * two other distinct players since that meeting. Uses finish time (completedAt), not
- * the order challenges were created.
+ * After challenger A and opponent B play, A cannot rematch B until A has completed
+ * matches against two other distinct players since that meeting. The opponent has no
+ * cooldown requirement. Uses finish time (completedAt), not create order.
  */
 export function getRematchStatus(
-  playerAId: string,
-  playerBId: string,
+  challengerId: string,
+  opponentId: string,
   matches: Match[]
 ): RematchStatus {
   const ordered = completedMatchesInOrder(matches);
   let lastIndex = -1;
   for (let i = 0; i < ordered.length; i++) {
-    if (isMatchBetween(ordered[i], playerAId, playerBId)) {
+    if (isMatchBetween(ordered[i], challengerId, opponentId)) {
       lastIndex = i;
     }
   }
@@ -185,41 +185,32 @@ export function getRematchStatus(
     return {
       hasPlayed: false,
       required: REMATCH_OTHERS_REQUIRED,
-      remainingA: 0,
-      remainingB: 0,
+      remaining: 0,
       blocked: false,
     };
   }
 
-  const othersA = new Set<string>();
-  const othersB = new Set<string>();
+  const others = new Set<string>();
   for (let i = lastIndex + 1; i < ordered.length; i++) {
-    const otherA = opponentIdInMatch(ordered[i], playerAId);
-    if (otherA && otherA !== playerBId) {
-      othersA.add(otherA);
-    }
-    const otherB = opponentIdInMatch(ordered[i], playerBId);
-    if (otherB && otherB !== playerAId) {
-      othersB.add(otherB);
+    const otherId = opponentIdInMatch(ordered[i], challengerId);
+    if (otherId && otherId !== opponentId) {
+      others.add(otherId);
     }
   }
 
-  const remainingA = Math.max(0, REMATCH_OTHERS_REQUIRED - othersA.size);
-  const remainingB = Math.max(0, REMATCH_OTHERS_REQUIRED - othersB.size);
+  const remaining = Math.max(0, REMATCH_OTHERS_REQUIRED - others.size);
 
   return {
     hasPlayed: true,
     required: REMATCH_OTHERS_REQUIRED,
-    remainingA,
-    remainingB,
-    blocked: remainingA > 0 || remainingB > 0,
+    remaining,
+    blocked: remaining > 0,
   };
 }
 
 export function formatRematchProgress(
   status: RematchStatus,
-  challengerName: string,
-  opponentName: string
+  challengerName: string
 ): string | null {
   if (!status.hasPlayed) {
     return null;
@@ -228,27 +219,16 @@ export function formatRematchProgress(
     return 'Rematch ready';
   }
 
-  const parts: string[] = [];
-  if (status.remainingA > 0) {
-    parts.push(
-      `${challengerName} needs ${status.remainingA} more opponent${status.remainingA === 1 ? '' : 's'}`
-    );
-  }
-  if (status.remainingB > 0) {
-    parts.push(
-      `${opponentName} needs ${status.remainingB} more opponent${status.remainingB === 1 ? '' : 's'}`
-    );
-  }
-  return `Rematch: ${parts.join('; ')}`;
+  return `${challengerName} needs ${status.remaining} more opponent${status.remaining === 1 ? '' : 's'}`;
 }
 
 export function getRematchBlockReason(
-  playerAId: string,
-  playerBId: string,
+  challengerId: string,
+  opponentId: string,
   matches: Match[]
 ): string | null {
-  const status = getRematchStatus(playerAId, playerBId, matches);
-  return status.blocked ? formatRematchProgress(status, 'Challenger', 'Opponent') : null;
+  const status = getRematchStatus(challengerId, opponentId, matches);
+  return status.blocked ? formatRematchProgress(status, 'Challenger') : null;
 }
 
 export function getChallengeBlockReason(

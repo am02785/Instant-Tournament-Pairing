@@ -105,38 +105,47 @@ describe('rematch and eligibility', () => {
   const ranked = [alice, bob, carol, dave];
   const ladder = ['a', 'b', 'c', 'd'];
 
-  it('blocks a rematch until each player has played two other distinct opponents', () => {
+  it('blocks a rematch until the challenger has played two other distinct opponents', () => {
     const matches = [match(dave, carol, dave.id, true, '2026-01-01T00:00:00.000Z')];
     const currentLadder = computeRoyaleLadder(ladder, matches);
     const status = getRematchStatus(dave.id, carol.id, matches);
-    expect(status).toMatchObject({ hasPlayed: true, blocked: true, remainingA: 2, remainingB: 2 });
+    expect(status).toMatchObject({ hasPlayed: true, blocked: true, remaining: 2 });
     expect(getRematchBlockReason(dave.id, carol.id, matches)).toMatch(/needs 2 more/);
     expect(getEligibleOpponents(dave, ranked, currentLadder, matches).map((p) => p.id)).toEqual(['a', 'b']);
   });
 
-  it('counts remaining opponents after some, but not all, cooldown matches', () => {
+  it('counts remaining opponents for the challenger only', () => {
     const matches = [
       match(dave, carol, dave.id, true, '2026-01-01T00:00:00.000Z'),
       match(dave, alice, dave.id, true, '2026-01-02T00:00:00.000Z'),
-      match(carol, bob, carol.id, true, '2026-01-03T00:00:00.000Z'),
     ];
     expect(getRematchStatus(dave.id, carol.id, matches)).toMatchObject({
       blocked: true,
-      remainingA: 1,
-      remainingB: 1,
+      remaining: 1,
     });
   });
 
-  it('allows a rematch after both players have each played two others', () => {
+  it('allows a rematch after the challenger alone has played two others', () => {
     const matches = [
       match(dave, alice, dave.id, true, '2026-01-01T00:00:00.000Z'),
       match(dave, bob, dave.id, true, '2026-01-02T00:00:00.000Z'),
       match(dave, carol, dave.id, true, '2026-01-03T00:00:00.000Z'),
-      match(alice, bob, alice.id, true, '2026-01-04T00:00:00.000Z'),
-      match(alice, carol, alice.id, true, '2026-01-05T00:00:00.000Z'),
     ];
     expect(getRematchStatus(dave.id, alice.id, matches).blocked).toBe(false);
     expect(getRematchBlockReason(dave.id, alice.id, matches)).toBeNull();
+  });
+
+  it('does not require the previous opponent to play other matches', () => {
+    const matches = [
+      match(dave, alice, dave.id, true, '2026-01-01T00:00:00.000Z'),
+      match(dave, bob, dave.id, true, '2026-01-02T00:00:00.000Z'),
+      match(dave, carol, dave.id, true, '2026-01-03T00:00:00.000Z'),
+    ];
+    // Alice has played nobody else since the Dave match, but rematch is still allowed
+    expect(getRematchStatus(dave.id, alice.id, matches)).toMatchObject({
+      blocked: false,
+      remaining: 0,
+    });
   });
 
   it('uses finish time so earlier-created matches completed later still start the cooldown', () => {
@@ -149,8 +158,7 @@ describe('rematch and eligibility', () => {
     ];
     expect(getRematchStatus(dave.id, carol.id, matches)).toMatchObject({
       blocked: true,
-      remainingA: 2,
-      remainingB: 2,
+      remaining: 2,
     });
   });
 
