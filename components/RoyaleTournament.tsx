@@ -79,7 +79,7 @@ const RoyaleTournament: React.FC<RoyaleTournamentProps> = ({
     ? getOpponentEligibility(challenger, players, ladder, matches)
     : [];
   const selectedOpponent = opponentOptions.find((option) => option.player.id === opponentId);
-  const canSubmitChallenge = Boolean(challenger && selectedOpponent?.eligible && !creating);
+  const canSubmitChallenge = Boolean(challenger && selectedOpponent && !creating);
 
   const pendingMatches = matches.filter((match) => match && !match.complete && match.player2);
   const completedMatches = matches.filter((match) => match?.complete);
@@ -91,7 +91,7 @@ const RoyaleTournament: React.FC<RoyaleTournamentProps> = ({
   };
 
   const handleCreate = async () => {
-    if (!challenger || !selectedOpponent?.eligible) return;
+    if (!challenger || !selectedOpponent) return;
     setCreating(true);
     try {
       await onCreateChallenge(challenger, selectedOpponent.player);
@@ -246,11 +246,10 @@ const RoyaleTournament: React.FC<RoyaleTournamentProps> = ({
       <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} fullWidth maxWidth="sm">
         <DialogTitle>Create Challenge</DialogTitle>
         <DialogContent>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-            The challenger must be ranked below the opponent, or unranked. After two players meet,
-            that challenger must face 2 other opponents before the pair can rematch — even if they
-            climb above the previous opponent.
-          </Typography>
+          <Alert severity="info" sx={{ mb: 2 }}>
+            You can create any pairing. Ladder and rematch rules are checked when you enter the
+            score and Completed at time.
+          </Alert>
           <FormControl fullWidth sx={{ mt: 1, mb: 2 }}>
             <InputLabel id="challenger-label">Challenger</InputLabel>
             <Select
@@ -281,34 +280,33 @@ const RoyaleTournament: React.FC<RoyaleTournamentProps> = ({
                   {opponentOptions.map((option) => {
                     const rematchLabel = rematchLabelFor(option.rematch);
                     const remaining = option.rematch.blocked ? option.rematch.remaining : 0;
-                    const secondary = option.eligible
-                      ? rematchLabel || 'Eligible'
-                      : option.reason || rematchLabel || 'Not eligible';
+                    const advisory = option.reason
+                      ? `May be rejected on score entry: ${option.reason}`
+                      : rematchLabel || 'Looks eligible under current standings';
 
                     return (
-                    <ListItemButton
-                      key={option.player.id}
-                      disabled={!option.eligible}
-                      selected={opponentId === option.player.id}
-                      onClick={() => option.eligible && setOpponentId(option.player.id)}
-                    >
-                      <ListItemText
-                        primary={`${option.player.name} — ${officeDaysLabel(option.player)}`}
-                        secondary={secondary}
-                      />
-                      {option.rematch.hasPlayed && (
-                        <Chip
-                          size="small"
-                          color={option.rematch.blocked ? 'warning' : 'success'}
-                          label={
-                            option.rematch.blocked
-                              ? `${remaining} left before rematch`
-                              : 'Rematch ready'
-                          }
-                          sx={{ ml: 1 }}
+                      <ListItemButton
+                        key={option.player.id}
+                        selected={opponentId === option.player.id}
+                        onClick={() => setOpponentId(option.player.id)}
+                      >
+                        <ListItemText
+                          primary={`${option.player.name} — ${officeDaysLabel(option.player)}`}
+                          secondary={advisory}
                         />
-                      )}
-                    </ListItemButton>
+                        {option.rematch.hasPlayed && (
+                          <Chip
+                            size="small"
+                            color={option.rematch.blocked ? 'warning' : 'success'}
+                            label={
+                              option.rematch.blocked
+                                ? `${remaining} left before rematch`
+                                : 'Rematch ready'
+                            }
+                            sx={{ ml: 1 }}
+                          />
+                        )}
+                      </ListItemButton>
                     );
                   })}
                 </List>

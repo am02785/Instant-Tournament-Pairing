@@ -9,6 +9,7 @@ import {
   getEligibleOpponents,
   getRematchBlockReason,
   getRematchStatus,
+  getRoyaleResultBlockReason,
 } from '../utils/royaleLadder';
 
 function player(id: string, name: string, seed?: number): Player {
@@ -221,6 +222,48 @@ describe('rematch and eligibility', () => {
   it('blocks a second pending match against the same pair', () => {
     const pending = [match(dave, alice, undefined, false)];
     expect(getChallengeBlockReason(dave, alice, ladder, pending)).toMatch(/pending/);
+  });
+});
+
+describe('getRoyaleResultBlockReason', () => {
+  const ladder = ['a', 'b', 'c', 'd'];
+
+  it('allows a pending rematch when Completed at is after two other matches', () => {
+    const pending = match(dave, carol, undefined, false);
+    // Dave stays below Carol (loses the intervening matches) so challenging up is still legal
+    const matches = [
+      match(dave, carol, carol.id, true, '2026-01-01T00:00:00.000Z'),
+      match(dave, alice, alice.id, true, '2026-01-02T00:00:00.000Z'),
+      match(dave, bob, bob.id, true, '2026-01-03T00:00:00.000Z'),
+      pending,
+    ];
+
+    expect(
+      getRoyaleResultBlockReason(pending, ladder, matches, '2026-01-04T00:00:00.000Z')
+    ).toBeNull();
+  });
+
+  it('rejects a rematch when Completed at is before two other matches', () => {
+    const pending = match(dave, carol, undefined, false);
+    const matches = [
+      match(dave, carol, carol.id, true, '2026-01-01T00:00:00.000Z'),
+      match(dave, alice, alice.id, true, '2026-01-02T00:00:00.000Z'),
+      match(dave, bob, bob.id, true, '2026-01-03T00:00:00.000Z'),
+      pending,
+    ];
+
+    expect(
+      getRoyaleResultBlockReason(pending, ladder, matches, '2026-01-01T12:00:00.000Z')
+    ).toMatch(/needs 2 more/);
+  });
+
+  it('rejects challenging down based on ladder state at Completed at', () => {
+    const pending = match(alice, dave, undefined, false);
+    const matches = [pending];
+
+    expect(
+      getRoyaleResultBlockReason(pending, ladder, matches, '2026-01-01T00:00:00.000Z')
+    ).toMatch(/ranked above you/);
   });
 });
 

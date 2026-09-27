@@ -30,12 +30,11 @@ Royale is a squash-style challenge ladder, not a pre-generated bracket. Matches 
 
 #### Who can challenge whom
 
-- You may only challenge someone **ranked above you**.
-- Unranked players may challenge any ranked player.
-- Ranked players cannot challenge someone below them or another unranked player.
-- After two players meet, that **challenger** must complete matches against **two other distinct players** before the pair can meet again. Cooldown stays on that challenger even if they climb above the previous opponent — the other player does **not** get a fresh 2-match cooldown to challenge back.
-- Rematch order uses each match’s **Completed at** time (editable when entering/editing a score), not when the challenge was created.
-- At most one incomplete match is allowed per pair.
+- Challenges can be created for any pairing in the UI (so historical scores can be entered out of order).
+- When you submit a score and **Completed at**, the app checks rules against the ladder at that time and shows an error if the match was not allowed:
+  - Challenger must have been ranked below the opponent, or unranked; opponent must have been ranked.
+  - After two players meet, that **challenger** must complete matches against **two other distinct players** before the pair can meet again. Cooldown stays on that challenger even if they climb above the previous opponent.
+- Rematch/ladder order uses each match’s **Completed at** time.
 
 #### How results move the ladder (leapfrog)
 

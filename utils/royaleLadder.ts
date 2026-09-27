@@ -249,6 +249,93 @@ export function getRematchBlockReason(
   return status.blocked ? formatRematchProgress(status, cooldownPlayerName) : null;
 }
 
+function rematchBlockMessage(
+  challenger: Player,
+  opponent: Player,
+  matches: Match[],
+  prefix = ''
+): string | null {
+  const rematch = getRematchStatus(challenger.id, opponent.id, matches);
+  if (!rematch.blocked) {
+    return null;
+  }
+
+  const cooldownName =
+    rematch.cooldownPlayerId === challenger.id
+      ? challenger.name
+      : rematch.cooldownPlayerId === opponent.id
+        ? opponent.name
+        : 'Previous challenger';
+
+  const message = formatRematchProgress(rematch, cooldownName || 'Previous challenger');
+  return message ? `${prefix}${message}` : null;
+}
+
+/**
+ * Completed matches that sort before this match when recorded at completedAt.
+ */
+export function getPriorCompletedMatches(
+  matches: Match[],
+  matchId: string,
+  completedAt: string
+): Match[] {
+  const proposed = matches.map((match) =>
+    match?.id === matchId
+      ? {
+          ...match,
+          complete: true,
+          completedAt,
+        }
+      : match
+  );
+
+  const ordered = completedMatchesInOrder(proposed);
+  const index = ordered.findIndex((match) => match.id === matchId);
+  if (index === -1) {
+    return ordered.filter((match) => match.id !== matchId);
+  }
+  return ordered.slice(0, index);
+}
+
+/**
+ * Validate a Royale result against ladder/rematch rules as of completedAt
+ * (other results before that time only). Used on score submit, not challenge create.
+ */
+export function getRoyaleResultBlockReason(
+  match: Pick<Match, 'id' | 'player1' | 'player2'>,
+  initialLadder: string[],
+  matches: Match[],
+  completedAt: string
+): string | null {
+  const challenger = match.player1;
+  const opponent = match.player2;
+
+  if (!match.id) {
+    return 'Match is missing an id';
+  }
+  if (!challenger?.id || !opponent?.id) {
+    return 'Match needs both players';
+  }
+  if (challenger.id === opponent.id) {
+    return 'Cannot play yourself';
+  }
+
+  const prior = getPriorCompletedMatches(matches, match.id, completedAt);
+  const ladder = computeRoyaleLadder(initialLadder, prior);
+  const challengerIndex = ladder.indexOf(challenger.id);
+  const opponentIndex = ladder.indexOf(opponent.id);
+
+  if (opponentIndex === -1) {
+    return 'At that completed time, you could only challenge a ranked player';
+  }
+
+  if (challengerIndex !== -1 && challengerIndex <= opponentIndex) {
+    return 'At that completed time, you could only challenge someone ranked above you';
+  }
+
+  return rematchBlockMessage(challenger, opponent, prior, 'At that completed time, ');
+}
+
 export function getChallengeBlockReason(
   challenger: Player,
   opponent: Player,
@@ -274,19 +361,7 @@ export function getChallengeBlockReason(
     return 'A match against this player is already pending';
   }
 
-  const rematch = getRematchStatus(challenger.id, opponent.id, matches);
-  if (!rematch.blocked) {
-    return null;
-  }
-
-  const cooldownName =
-    rematch.cooldownPlayerId === challenger.id
-      ? challenger.name
-      : rematch.cooldownPlayerId === opponent.id
-        ? opponent.name
-        : 'Previous challenger';
-
-  return formatRematchProgress(rematch, cooldownName || 'Previous challenger');
+  return rematchBlockMessage(challenger, opponent, matches);
 }
 
 export function getEligibleOpponents(
