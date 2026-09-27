@@ -86,11 +86,21 @@ describe('applyRoyaleResult', () => {
 });
 
 describe('computeRoyaleLadder', () => {
-  it('replays completed matches in order', () => {
+  it('replays completed matches by Completed at time', () => {
     const initial = ['a', 'b', 'c', 'd'];
     const matches = [
-      match(dave, alice, dave.id),
-      match(eve, bob, eve.id),
+      match(dave, alice, dave.id, true, '2026-01-01T00:00:00.000Z'),
+      match(eve, bob, eve.id, true, '2026-01-02T00:00:00.000Z'),
+    ];
+    expect(computeRoyaleLadder(initial, matches)).toEqual(['d', 'a', 'e', 'b', 'c']);
+  });
+
+  it('uses Completed at even when bracket array order differs', () => {
+    const initial = ['a', 'b', 'c', 'd'];
+    // Stored newest-first in the array, but Completed at says Dave vs Alice was first
+    const matches = [
+      match(eve, bob, eve.id, true, '2026-01-02T00:00:00.000Z'),
+      match(dave, alice, dave.id, true, '2026-01-01T00:00:00.000Z'),
     ];
     expect(computeRoyaleLadder(initial, matches)).toEqual(['d', 'a', 'e', 'b', 'c']);
   });

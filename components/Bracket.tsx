@@ -13,6 +13,7 @@ import {
   Paper
 } from '@mui/material';
 import { Match } from '../types';
+import { fromDatetimeLocalValue, toDatetimeLocalValue } from '../utils/datetimeLocal';
 
 interface BracketProps {
   bracket: Match[];
@@ -20,7 +21,8 @@ interface BracketProps {
     matchId: string,
     winnerId: string,
     player1Points: number,
-    player2Points: number
+    player2Points: number,
+    completedAt?: string
   ) => void;
 }
 
@@ -30,12 +32,14 @@ const Bracket: React.FC<BracketProps> = ({ bracket, handleUpdateMatch }) => {
   const [player1Points, setPlayer1Points] = useState<number>(0);
   const [player2Points, setPlayer2Points] = useState<number>(0);
   const [winner, setWinner] = useState<string | null>(null);
+  const [completedAtLocal, setCompletedAtLocal] = useState(toDatetimeLocalValue());
 
   const handleOpen = (match: Match) => {
     setSelectedMatch(match);
     setPlayer1Points(match.player1Points || 0);
     setPlayer2Points(match.player2Points || 0);
     setWinner(match.winnerId || null);
+    setCompletedAtLocal(toDatetimeLocalValue(match.completedAt));
     setOpen(true);
   };
 
@@ -51,7 +55,13 @@ const Bracket: React.FC<BracketProps> = ({ bracket, handleUpdateMatch }) => {
       return;
     }
 
-    handleUpdateMatch(selectedMatch.id, winner, player1Points, player2Points);
+    handleUpdateMatch(
+      selectedMatch.id,
+      winner,
+      player1Points,
+      player2Points,
+      fromDatetimeLocalValue(completedAtLocal)
+    );
     handleClose();
   };
 
@@ -199,6 +209,16 @@ const Bracket: React.FC<BracketProps> = ({ bracket, handleUpdateMatch }) => {
               )}
             </Select>
           </FormControl>
+
+          <TextField
+            label="Completed at"
+            type="datetime-local"
+            fullWidth
+            value={completedAtLocal}
+            onChange={(e) => setCompletedAtLocal(e.target.value)}
+            sx={{ mb: 2 }}
+            InputLabelProps={{ shrink: true }}
+          />
           
           <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
             <Button onClick={handleClose} variant="outlined" color="error">
@@ -208,7 +228,7 @@ const Bracket: React.FC<BracketProps> = ({ bracket, handleUpdateMatch }) => {
               onClick={handleSubmit} 
               variant="contained" 
               color="primary"
-              disabled={!winner || !selectedMatch?.id}
+              disabled={!winner || !selectedMatch?.id || !completedAtLocal}
             >
               Submit
             </Button>

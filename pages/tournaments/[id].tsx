@@ -988,7 +988,13 @@ const TournamentDetails = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading, tournament?.id, tournament?.complete]);
   
-  const handleUpdateMatch = useCallback(async (matchId: string, winnerId: string, player1Points: number, player2Points: number): Promise<void> => {
+  const handleUpdateMatch = useCallback(async (
+    matchId: string,
+    winnerId: string,
+    player1Points: number,
+    player2Points: number,
+    completedAt?: string
+  ): Promise<void> => {
     if (!tournament?.bracket || !matchId || !id || typeof id !== 'string') {
       console.error('Invalid parameters for match update');
       return;
@@ -1011,6 +1017,7 @@ const TournamentDetails = () => {
       // Check if this is a knockout match and if the winner is changing
       const oldWinnerId = matchToUpdate.winnerId;
       const isWinnerChanging = matchToUpdate.stage === 'knockout' && oldWinnerId && oldWinnerId !== winnerId;
+      const resolvedCompletedAt = completedAt || matchToUpdate.completedAt || new Date().toISOString();
       
       const updatedBracket = tournament.bracket.map((m: Match) =>
         m?.id === matchId ? {
@@ -1019,7 +1026,7 @@ const TournamentDetails = () => {
           player2Points,
           winnerId,
           complete: true,
-          completedAt: m.completedAt || new Date().toISOString(),
+          completedAt: resolvedCompletedAt,
         } : m
       ).filter(Boolean);
 

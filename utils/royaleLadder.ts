@@ -94,13 +94,14 @@ export function applyRoyaleResult(ladder: string[], winnerId: string, loserId: s
 }
 
 /**
- * Replay completed matches in bracket order onto the initial ladder.
+ * Replay completed matches by Completed at time onto the initial ladder.
+ * Matches without completedAt fall back to bracket order after timed ones.
  */
 export function computeRoyaleLadder(initialLadder: string[], matches: Match[]): string[] {
   let ladder = [...initialLadder];
 
-  for (const match of matches) {
-    if (!match?.complete || !match.winnerId || !match.player1?.id || !match.player2?.id) {
+  for (const match of completedMatchesInOrder(matches)) {
+    if (!match.winnerId || !match.player1?.id || !match.player2?.id) {
       continue;
     }
 

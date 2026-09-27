@@ -21,7 +21,7 @@ import {
   Typography,
 } from '@mui/material';
 import { Match, Player, Tournament } from '../types';
-import MatchCard from './MatchCard';
+import MatchCard, { UpdateMatchHandler } from './MatchCard';
 import {
   computeRoyaleLadder,
   formatRematchProgress,
@@ -33,7 +33,7 @@ import {
 
 type RoyaleTournamentProps = {
   tournament: Tournament;
-  onUpdateMatch: (id: string, winnerId: string, p1Points: number, p2Points: number) => void;
+  onUpdateMatch: UpdateMatchHandler;
   onCreateChallenge: (challenger: Player, opponent: Player) => Promise<void>;
   canUpdateMatch: (match: Match) => boolean;
 };

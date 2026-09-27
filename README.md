@@ -20,7 +20,7 @@ Players are grouped by seed and office-day overlap, play a round-robin group sta
 
 ### Royale (challenge ladder)
 
-Royale is a squash-style challenge ladder, not a pre-generated bracket. Matches are created when someone challenges a player ranked above them. Standings are derived by replaying results, so editing a score recalculates the ladder correctly.
+Royale is a squash-style challenge ladder, not a pre-generated bracket. Matches are created when someone challenges a player ranked above them. Standings are derived by replaying results in **Completed at** order, so editing a score or its time recalculates the ladder correctly.
 
 #### Starting ranks
 
@@ -34,6 +34,7 @@ Royale is a squash-style challenge ladder, not a pre-generated bracket. Matches 
 - Unranked players may challenge any ranked player.
 - Ranked players cannot challenge someone below them or another unranked player.
 - After two players meet, that **challenger** must complete matches against **two other distinct players** before the pair can meet again. Cooldown stays on that challenger even if they climb above the previous opponent — the other player does **not** get a fresh 2-match cooldown to challenge back.
+- Rematch order uses each match’s **Completed at** time (editable when entering/editing a score), not when the challenge was created.
 - At most one incomplete match is allowed per pair.
 
 #### How results move the ladder (leapfrog)

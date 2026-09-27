@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Alert, Box, Card, CardContent, Typography } from '@mui/material';
 import { Match } from '../types';
 import { hasIncompleteFeeders } from '../utils/knockoutAdvancement';
+import { fromDatetimeLocalValue, toDatetimeLocalValue } from '../utils/datetimeLocal';
 
 const formatGroupLabel = (groupId: string): string => {
   const part = groupId.replace(/^group-/, '');
@@ -15,9 +16,17 @@ const formatPlayerGroupPlace = (groupId?: string, place?: 1 | 2): string => {
   return ` (${formatGroupLabel(groupId)} ${formatPlace(place)})`;
 };
 
+export type UpdateMatchHandler = (
+  id: string,
+  winnerId: string,
+  p1Points: number,
+  p2Points: number,
+  completedAt?: string
+) => void;
+
 type MatchCardProps = {
   match: Match;
-  onUpdateMatch: (id: string, winnerId: string, p1Points: number, p2Points: number) => void;
+  onUpdateMatch: UpdateMatchHandler;
   canUpdate?: boolean;
   allMatches?: Match[];
 };
@@ -30,14 +39,16 @@ const MatchCard: React.FC<MatchCardProps> = ({
 }) => {
   const [player1Points, setPlayer1Points] = useState(0);
   const [player2Points, setPlayer2Points] = useState(0);
+  const [completedAtLocal, setCompletedAtLocal] = useState(toDatetimeLocalValue());
   const [showScoreInput, setShowScoreInput] = useState(false);
 
   useEffect(() => {
     if (match) {
       setPlayer1Points(match.player1Points || 0);
       setPlayer2Points(match.player2Points || 0);
+      setCompletedAtLocal(toDatetimeLocalValue(match.completedAt));
     }
-  }, [match?.player1Points, match?.player2Points]);
+  }, [match?.player1Points, match?.player2Points, match?.completedAt]);
 
   const handleSubmitScore = (): void => {
     if (!match?.id || !match?.player1?.id) {
@@ -45,8 +56,10 @@ const MatchCard: React.FC<MatchCardProps> = ({
       return;
     }
 
+    const completedAt = fromDatetimeLocalValue(completedAtLocal);
+
     if (!match.player2) {
-      onUpdateMatch(match.id, match.player1.id, 1, 0);
+      onUpdateMatch(match.id, match.player1.id, 1, 0, completedAt);
       return;
     }
 
@@ -56,7 +69,7 @@ const MatchCard: React.FC<MatchCardProps> = ({
     }
 
     const winnerId = player1Points > player2Points ? match.player1.id : match.player2.id;
-    onUpdateMatch(match.id, winnerId, player1Points, player2Points);
+    onUpdateMatch(match.id, winnerId, player1Points, player2Points, completedAt);
     setShowScoreInput(false);
   };
 
@@ -124,6 +137,10 @@ const MatchCard: React.FC<MatchCardProps> = ({
     );
   }
 
+  const completedAtDisplay = match.completedAt
+    ? new Date(match.completedAt).toLocaleString()
+    : null;
+
   return (
     <Card variant="outlined" sx={{ mb: 1 }}>
       <CardContent sx={{ py: 1 }}>
@@ -149,6 +166,11 @@ const MatchCard: React.FC<MatchCardProps> = ({
                   ? match.player1?.name || 'Unknown'
                   : match.player2?.name || 'Unknown'}
                 {match.player1Points !== undefined && ` (${match.player1Points}-${match.player2Points})`}
+              </Typography>
+            )}
+            {completedAtDisplay && (
+              <Typography variant="caption" color="textSecondary" sx={{ display: 'block' }}>
+                Completed: {completedAtDisplay}
               </Typography>
             )}
             {match.stage === 'knockout' && match.futureMatchId && (
@@ -184,7 +206,7 @@ const MatchCard: React.FC<MatchCardProps> = ({
         </Box>
 
         {showScoreInput && canUpdate && (
-          <Box sx={{ mt: 2, display: 'flex', gap: 1, alignItems: 'center' }}>
+          <Box sx={{ mt: 2, display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center' }}>
             <Typography variant="body2">{match.player1?.name || 'Player 1'}:</Typography>
             <input
               type="number"
@@ -199,11 +221,18 @@ const MatchCard: React.FC<MatchCardProps> = ({
               onChange={(e) => setPlayer2Points(parseInt(e.target.value) || 0)}
               style={{ width: '60px', padding: '4px' }}
             />
+            <Typography variant="body2">Completed at:</Typography>
+            <input
+              type="datetime-local"
+              value={completedAtLocal}
+              onChange={(e) => setCompletedAtLocal(e.target.value)}
+              style={{ padding: '4px' }}
+            />
             <button
               type="button"
               style={{ padding: '4px 8px', fontSize: '12px' }}
               onClick={handleSubmitScore}
-              disabled={!match.id}
+              disabled={!match.id || !completedAtLocal}
             >
               Submit
             </button>
