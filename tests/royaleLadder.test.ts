@@ -114,7 +114,7 @@ describe('rematch and eligibility', () => {
     expect(getEligibleOpponents(dave, ranked, currentLadder, matches).map((p) => p.id)).toEqual(['a', 'b']);
   });
 
-  it('counts remaining opponents for the challenger only', () => {
+  it('counts remaining opponents for the last-meeting challenger only', () => {
     const matches = [
       match(dave, carol, dave.id, true, '2026-01-01T00:00:00.000Z'),
       match(dave, alice, dave.id, true, '2026-01-02T00:00:00.000Z'),
@@ -122,17 +122,44 @@ describe('rematch and eligibility', () => {
     expect(getRematchStatus(dave.id, carol.id, matches)).toMatchObject({
       blocked: true,
       remaining: 1,
+      cooldownPlayerId: dave.id,
     });
   });
 
-  it('allows a rematch after the challenger alone has played two others', () => {
+  it('keeps cooldown on the previous challenger when the ladder flips', () => {
+    // Dave challenges Carol and loses; then Dave beats Bob and climbs above Carol.
+    const matches = [
+      match(dave, carol, carol.id, true, '2026-01-01T00:00:00.000Z'),
+      match(dave, bob, dave.id, true, '2026-01-02T00:00:00.000Z'),
+    ];
+    const currentLadder = computeRoyaleLadder(ladder, matches);
+    expect(currentLadder.indexOf(dave.id)).toBeLessThan(currentLadder.indexOf(carol.id));
+
+    // Pair cooldown still tracks Dave's remaining others — not a fresh 2 for Carol.
+    expect(getRematchStatus(carol.id, dave.id, matches)).toMatchObject({
+      blocked: true,
+      remaining: 1,
+      cooldownPlayerId: dave.id,
+    });
+    expect(getRematchStatus(dave.id, carol.id, matches)).toMatchObject({
+      blocked: true,
+      remaining: 1,
+      cooldownPlayerId: dave.id,
+    });
+    expect(getChallengeBlockReason(carol, dave, currentLadder, matches)).toMatch(/Dave needs 1 more/);
+  });
+
+  it('allows either direction once the previous challenger has played two others', () => {
     const matches = [
       match(dave, alice, dave.id, true, '2026-01-01T00:00:00.000Z'),
       match(dave, bob, dave.id, true, '2026-01-02T00:00:00.000Z'),
       match(dave, carol, dave.id, true, '2026-01-03T00:00:00.000Z'),
     ];
+    const currentLadder = computeRoyaleLadder(ladder, matches);
     expect(getRematchStatus(dave.id, alice.id, matches).blocked).toBe(false);
     expect(getRematchBlockReason(dave.id, alice.id, matches)).toBeNull();
+    // Alice may challenge Dave (now above her) without needing her own two others
+    expect(getChallengeBlockReason(alice, dave, currentLadder, matches)).toBeNull();
   });
 
   it('does not require the previous opponent to play other matches', () => {
@@ -159,6 +186,7 @@ describe('rematch and eligibility', () => {
     expect(getRematchStatus(dave.id, carol.id, matches)).toMatchObject({
       blocked: true,
       remaining: 2,
+      cooldownPlayerId: dave.id,
     });
   });
 

@@ -33,7 +33,7 @@ Royale is a squash-style challenge ladder, not a pre-generated bracket. Matches 
 - You may only challenge someone **ranked above you**.
 - Unranked players may challenge any ranked player.
 - Ranked players cannot challenge someone below them or another unranked player.
-- After two players meet, the **challenger** cannot rematch that opponent until they have completed matches against **two other distinct players**. The previous opponent has no cooldown.
+- After two players meet, that **challenger** must complete matches against **two other distinct players** before the pair can meet again. Cooldown stays on that challenger even if they climb above the previous opponent — the other player does **not** get a fresh 2-match cooldown to challenge back.
 - At most one incomplete match is allowed per pair.
 
 #### How results move the ladder (leapfrog)

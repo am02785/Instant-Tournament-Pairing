@@ -67,6 +67,13 @@ const RoyaleTournament: React.FC<RoyaleTournamentProps> = ({
   );
   const unranked = useMemo(() => getUnrankedPlayers(players, ladder), [players, ladder]);
 
+  const rematchLabelFor = (status: ReturnType<typeof getRematchStatus>): string | null => {
+    const cooldownName = status.cooldownPlayerId
+      ? playerById.get(status.cooldownPlayerId)?.name || 'Previous challenger'
+      : 'Previous challenger';
+    return formatRematchProgress(status, cooldownName);
+  };
+
   const challenger = players.find((player) => player.id === challengerId);
   const opponentOptions = challenger
     ? getOpponentEligibility(challenger, players, ladder, matches)
@@ -212,9 +219,7 @@ const RoyaleTournament: React.FC<RoyaleTournamentProps> = ({
               const rematch = match.player2
                 ? getRematchStatus(match.player1.id, match.player2.id, matches)
                 : null;
-              const rematchLabel = rematch
-                ? formatRematchProgress(rematch, match.player1.name || 'Challenger')
-                : null;
+              const rematchLabel = rematch ? rematchLabelFor(rematch) : null;
 
               return (
                 <Box key={match.id} sx={{ mb: 1 }}>
@@ -243,7 +248,8 @@ const RoyaleTournament: React.FC<RoyaleTournamentProps> = ({
         <DialogContent>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
             The challenger must be ranked below the opponent, or unranked. After two players meet,
-            the challenger must face 2 other opponents before rematching that player.
+            that challenger must face 2 other opponents before the pair can rematch — even if they
+            climb above the previous opponent.
           </Typography>
           <FormControl fullWidth sx={{ mt: 1, mb: 2 }}>
             <InputLabel id="challenger-label">Challenger</InputLabel>
@@ -273,11 +279,11 @@ const RoyaleTournament: React.FC<RoyaleTournamentProps> = ({
               ) : (
                 <List>
                   {opponentOptions.map((option) => {
-                    const rematchLabel = formatRematchProgress(option.rematch, challenger.name);
+                    const rematchLabel = rematchLabelFor(option.rematch);
                     const remaining = option.rematch.blocked ? option.rematch.remaining : 0;
                     const secondary = option.eligible
                       ? rematchLabel || 'Eligible'
-                      : [option.reason, rematchLabel].filter(Boolean).join(' — ');
+                      : option.reason || rematchLabel || 'Not eligible';
 
                     return (
                     <ListItemButton

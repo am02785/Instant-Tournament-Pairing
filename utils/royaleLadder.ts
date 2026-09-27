@@ -6,9 +6,11 @@ export const REMATCH_OTHERS_REQUIRED = 2;
 export type RematchStatus = {
   hasPlayed: boolean;
   required: number;
-  /** Other opponents the challenger still needs before rematching this player. */
+  /** Other opponents the last-meeting challenger still needs before this pair can rematch. */
   remaining: number;
   blocked: boolean;
+  /** player1 of the last completed meeting — cooldown stays on this player either way. */
+  cooldownPlayerId?: string;
 };
 
 export type OpponentEligibility = {
@@ -164,19 +166,20 @@ export function hasPendingMatch(matches: Match[], playerAId: string, playerBId: 
 }
 
 /**
- * After challenger A and opponent B play, A cannot rematch B until A has completed
- * matches against two other distinct players since that meeting. The opponent has no
- * cooldown requirement. Uses finish time (completedAt), not create order.
+ * After challenger A and opponent B play, the pair cannot rematch until A (player1 of
+ * that meeting) has completed matches against two other distinct players. Cooldown stays
+ * on A even if ladder positions flip and B becomes the one who would challenge up.
+ * Uses finish time (completedAt), not create order.
  */
 export function getRematchStatus(
-  challengerId: string,
-  opponentId: string,
+  playerAId: string,
+  playerBId: string,
   matches: Match[]
 ): RematchStatus {
   const ordered = completedMatchesInOrder(matches);
   let lastIndex = -1;
   for (let i = 0; i < ordered.length; i++) {
-    if (isMatchBetween(ordered[i], challengerId, opponentId)) {
+    if (isMatchBetween(ordered[i], playerAId, playerBId)) {
       lastIndex = i;
     }
   }
@@ -190,10 +193,22 @@ export function getRematchStatus(
     };
   }
 
+  const lastMeeting = ordered[lastIndex];
+  const cooldownPlayerId = lastMeeting.player1?.id;
+  const previousOpponentId = lastMeeting.player2?.id;
+  if (!cooldownPlayerId || !previousOpponentId) {
+    return {
+      hasPlayed: false,
+      required: REMATCH_OTHERS_REQUIRED,
+      remaining: 0,
+      blocked: false,
+    };
+  }
+
   const others = new Set<string>();
   for (let i = lastIndex + 1; i < ordered.length; i++) {
-    const otherId = opponentIdInMatch(ordered[i], challengerId);
-    if (otherId && otherId !== opponentId) {
+    const otherId = opponentIdInMatch(ordered[i], cooldownPlayerId);
+    if (otherId && otherId !== previousOpponentId) {
       others.add(otherId);
     }
   }
@@ -205,12 +220,13 @@ export function getRematchStatus(
     required: REMATCH_OTHERS_REQUIRED,
     remaining,
     blocked: remaining > 0,
+    cooldownPlayerId,
   };
 }
 
 export function formatRematchProgress(
   status: RematchStatus,
-  challengerName: string
+  cooldownPlayerName: string
 ): string | null {
   if (!status.hasPlayed) {
     return null;
@@ -219,16 +235,17 @@ export function formatRematchProgress(
     return 'Rematch ready';
   }
 
-  return `${challengerName} needs ${status.remaining} more opponent${status.remaining === 1 ? '' : 's'}`;
+  return `${cooldownPlayerName} needs ${status.remaining} more opponent${status.remaining === 1 ? '' : 's'}`;
 }
 
 export function getRematchBlockReason(
-  challengerId: string,
-  opponentId: string,
-  matches: Match[]
+  playerAId: string,
+  playerBId: string,
+  matches: Match[],
+  cooldownPlayerName = 'Previous challenger'
 ): string | null {
-  const status = getRematchStatus(challengerId, opponentId, matches);
-  return status.blocked ? formatRematchProgress(status, 'Challenger') : null;
+  const status = getRematchStatus(playerAId, playerBId, matches);
+  return status.blocked ? formatRematchProgress(status, cooldownPlayerName) : null;
 }
 
 export function getChallengeBlockReason(
@@ -256,7 +273,19 @@ export function getChallengeBlockReason(
     return 'A match against this player is already pending';
   }
 
-  return getRematchBlockReason(challenger.id, opponent.id, matches);
+  const rematch = getRematchStatus(challenger.id, opponent.id, matches);
+  if (!rematch.blocked) {
+    return null;
+  }
+
+  const cooldownName =
+    rematch.cooldownPlayerId === challenger.id
+      ? challenger.name
+      : rematch.cooldownPlayerId === opponent.id
+        ? opponent.name
+        : 'Previous challenger';
+
+  return formatRematchProgress(rematch, cooldownName || 'Previous challenger');
 }
 
 export function getEligibleOpponents(
