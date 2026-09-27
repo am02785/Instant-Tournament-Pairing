@@ -160,6 +160,11 @@ function completedMatchesInOrder(matches: Match[]): Match[] {
     .map(({ match }) => match);
 }
 
+/** Completed matches newest-first for display. */
+export function getCompletedMatchesNewestFirst(matches: Match[]): Match[] {
+  return [...completedMatchesInOrder(matches)].reverse();
+}
+
 export function hasPendingMatch(matches: Match[], playerAId: string, playerBId: string): boolean {
   return matches.some(
     (match) => match && !match.complete && isMatchBetween(match, playerAId, playerBId)

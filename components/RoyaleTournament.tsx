@@ -25,6 +25,7 @@ import MatchCard, { UpdateMatchHandler } from './MatchCard';
 import {
   computeRoyaleLadder,
   formatRematchProgress,
+  getCompletedMatchesNewestFirst,
   getOpponentEligibility,
   getRematchStatus,
   getRoyaleRecords,
@@ -82,7 +83,10 @@ const RoyaleTournament: React.FC<RoyaleTournamentProps> = ({
   const canSubmitChallenge = Boolean(challenger && selectedOpponent && !creating);
 
   const pendingMatches = matches.filter((match) => match && !match.complete && match.player2);
-  const completedMatches = matches.filter((match) => match?.complete);
+  const completedMatches = useMemo(
+    () => getCompletedMatchesNewestFirst(matches),
+    [matches]
+  );
 
   const handleOpenDialog = () => {
     setChallengerId('');
@@ -215,7 +219,7 @@ const RoyaleTournament: React.FC<RoyaleTournamentProps> = ({
           {completedMatches.length === 0 ? (
             <Typography color="text.secondary">No completed matches yet.</Typography>
           ) : (
-            [...completedMatches].reverse().map((match) => {
+            completedMatches.map((match) => {
               const rematch = match.player2
                 ? getRematchStatus(match.player1.id, match.player2.id, matches)
                 : null;
