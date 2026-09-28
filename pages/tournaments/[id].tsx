@@ -16,7 +16,14 @@ import {
 import { useRouter } from 'next/router';
 import { generateKnockoutPairs, generateKnockoutFirstRoundWorldCup, type QualifiedWithGroupInfo } from 'utils/pairingLogic';
 import { applyKnockoutAdvancement } from 'utils/knockoutAdvancement';
-import { calculateRoyaleRankings, getRoyaleResultBlockReason, isRoyaleTournament } from 'utils/royaleLadder';
+import {
+  calculateRoyaleRankings,
+  getRoyaleResultBlockReason,
+  isRoyaleTournament,
+  orientRoyaleMatchAsOf,
+  orderPlayersAsChallengerOpponent,
+  computeRoyaleLadder,
+} from 'utils/royaleLadder';
 import { Match, Player, Tournament } from 'types';
 import MatchCard from '@components/MatchCard';
 import RoyaleTournament from '@components/RoyaleTournament';
@@ -1019,9 +1026,23 @@ const TournamentDetails = () => {
       const isWinnerChanging = matchToUpdate.stage === 'knockout' && oldWinnerId && oldWinnerId !== winnerId;
       const resolvedCompletedAt = completedAt || matchToUpdate.completedAt || new Date().toISOString();
 
+      let royaleOriented: Match | null = null;
       if (matchToUpdate.stage === 'royale' && matchToUpdate.player1 && matchToUpdate.player2) {
-        const blockReason = getRoyaleResultBlockReason(
+        const oriented = orientRoyaleMatchAsOf(
           matchToUpdate,
+          tournament.initialLadder || [],
+          tournament.bracket,
+          resolvedCompletedAt,
+          player1Points,
+          player2Points
+        );
+        if ('error' in oriented) {
+          alert(oriented.error);
+          return;
+        }
+
+        const blockReason = getRoyaleResultBlockReason(
+          oriented.match,
           tournament.initialLadder || [],
           tournament.bracket,
           resolvedCompletedAt
@@ -1030,17 +1051,26 @@ const TournamentDetails = () => {
           alert(blockReason);
           return;
         }
-      }
-      
-      const updatedBracket = tournament.bracket.map((m: Match) =>
-        m?.id === matchId ? {
-          ...m,
-          player1Points,
-          player2Points,
+
+        royaleOriented = {
+          ...oriented.match,
           winnerId,
           complete: true,
           completedAt: resolvedCompletedAt,
-        } : m
+        };
+      }
+      
+      const updatedBracket = tournament.bracket.map((m: Match) =>
+        m?.id === matchId
+          ? royaleOriented || {
+              ...m,
+              player1Points,
+              player2Points,
+              winnerId,
+              complete: true,
+              completedAt: resolvedCompletedAt,
+            }
+          : m
       ).filter(Boolean);
 
       // Clean up and validate the bracket before updating
@@ -1095,13 +1125,18 @@ const TournamentDetails = () => {
     }
   }, [tournament, id, canUpdateMatch, updateTournament]);
 
-  const handleCreateChallenge = useCallback(async (challenger: Player, opponent: Player): Promise<void> => {
+  const handleCreateChallenge = useCallback(async (playerA: Player, playerB: Player): Promise<void> => {
     if (!tournament || !id || typeof id !== 'string') return;
+
+    const ladder = computeRoyaleLadder(tournament.initialLadder || [], tournament.bracket || []);
+    const ordered = orderPlayersAsChallengerOpponent(playerA, playerB, ladder);
+    const player1 = ordered?.challenger ?? playerA;
+    const player2 = ordered?.opponent ?? playerB;
 
     const newMatch: Match = {
       id: generateUUID(),
-      player1: challenger,
-      player2: opponent,
+      player1,
+      player2,
       round: (tournament.bracket?.length || 0) + 1,
       stage: 'royale',
       complete: false,

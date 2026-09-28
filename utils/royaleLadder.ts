@@ -303,8 +303,91 @@ export function getPriorCompletedMatches(
 }
 
 /**
+ * Decide challenger vs opponent from ladder position: unranked challenges ranked;
+ * otherwise the lower-ranked player is the challenger. Returns null if both are unranked.
+ */
+export function orderPlayersAsChallengerOpponent(
+  playerA: Player,
+  playerB: Player,
+  ladder: string[]
+): { challenger: Player; opponent: Player } | null {
+  if (playerA.id === playerB.id) {
+    return null;
+  }
+
+  const indexA = ladder.indexOf(playerA.id);
+  const indexB = ladder.indexOf(playerB.id);
+
+  if (indexA === -1 && indexB === -1) {
+    return null;
+  }
+  if (indexA === -1) {
+    return { challenger: playerA, opponent: playerB };
+  }
+  if (indexB === -1) {
+    return { challenger: playerB, opponent: playerA };
+  }
+  if (indexA > indexB) {
+    return { challenger: playerA, opponent: playerB };
+  }
+  if (indexB > indexA) {
+    return { challenger: playerB, opponent: playerA };
+  }
+  return null;
+}
+
+/**
+ * Orient a Royale match so player1 is the challenger as of completedAt.
+ * Points are remapped by player id when slots swap.
+ */
+export function orientRoyaleMatchAsOf(
+  match: Match,
+  initialLadder: string[],
+  matches: Match[],
+  completedAt: string,
+  player1Points?: number,
+  player2Points?: number
+): { match: Match; challenger: Player; opponent: Player } | { error: string } {
+  if (!match.id) {
+    return { error: 'Match is missing an id' };
+  }
+  if (!match.player1?.id || !match.player2?.id) {
+    return { error: 'Match needs both players' };
+  }
+
+  const prior = getPriorCompletedMatches(matches, match.id, completedAt);
+  const ladder = computeRoyaleLadder(initialLadder, prior);
+  const ordered = orderPlayersAsChallengerOpponent(match.player1, match.player2, ladder);
+
+  if (!ordered) {
+    return {
+      error:
+        'At that completed time, both players were unranked, so a challenger could not be determined',
+    };
+  }
+
+  const scoreByPlayerId: Record<string, number> = {
+    [match.player1.id]: player1Points ?? match.player1Points ?? 0,
+    [match.player2.id]: player2Points ?? match.player2Points ?? 0,
+  };
+
+  return {
+    challenger: ordered.challenger,
+    opponent: ordered.opponent,
+    match: {
+      ...match,
+      player1: ordered.challenger,
+      player2: ordered.opponent,
+      player1Points: scoreByPlayerId[ordered.challenger.id] ?? 0,
+      player2Points: scoreByPlayerId[ordered.opponent.id] ?? 0,
+    },
+  };
+}
+
+/**
  * Validate a Royale result against ladder/rematch rules as of completedAt
- * (other results before that time only). Used on score submit, not challenge create.
+ * (other results before that time only). Challenger is inferred as the lower-ranked
+ * (or unranked) player at that time — match.player1/player2 order does not matter.
  */
 export function getRoyaleResultBlockReason(
   match: Pick<Match, 'id' | 'player1' | 'player2'>,
@@ -312,31 +395,23 @@ export function getRoyaleResultBlockReason(
   matches: Match[],
   completedAt: string
 ): string | null {
-  const challenger = match.player1;
-  const opponent = match.player2;
-
   if (!match.id) {
     return 'Match is missing an id';
   }
-  if (!challenger?.id || !opponent?.id) {
+  if (!match.player1?.id || !match.player2?.id) {
     return 'Match needs both players';
   }
-  if (challenger.id === opponent.id) {
+  if (match.player1.id === match.player2.id) {
     return 'Cannot play yourself';
   }
 
+  const oriented = orientRoyaleMatchAsOf(match as Match, initialLadder, matches, completedAt);
+  if ('error' in oriented) {
+    return oriented.error;
+  }
+
+  const { challenger, opponent } = oriented;
   const prior = getPriorCompletedMatches(matches, match.id, completedAt);
-  const ladder = computeRoyaleLadder(initialLadder, prior);
-  const challengerIndex = ladder.indexOf(challenger.id);
-  const opponentIndex = ladder.indexOf(opponent.id);
-
-  if (opponentIndex === -1) {
-    return 'At that completed time, you could only challenge a ranked player';
-  }
-
-  if (challengerIndex !== -1 && challengerIndex <= opponentIndex) {
-    return 'At that completed time, you could only challenge someone ranked above you';
-  }
 
   return rematchBlockMessage(challenger, opponent, prior, 'At that completed time, ');
 }

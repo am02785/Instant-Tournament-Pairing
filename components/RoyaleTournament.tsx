@@ -13,9 +13,6 @@ import {
   FormControl,
   Grid,
   InputLabel,
-  List,
-  ListItemButton,
-  ListItemText,
   MenuItem,
   Select,
   Typography,
@@ -26,16 +23,16 @@ import {
   computeRoyaleLadder,
   formatRematchProgress,
   getCompletedMatchesNewestFirst,
-  getOpponentEligibility,
   getRematchStatus,
   getRoyaleRecords,
   getUnrankedPlayers,
+  orderPlayersAsChallengerOpponent,
 } from '../utils/royaleLadder';
 
 type RoyaleTournamentProps = {
   tournament: Tournament;
   onUpdateMatch: UpdateMatchHandler;
-  onCreateChallenge: (challenger: Player, opponent: Player) => Promise<void>;
+  onCreateChallenge: (playerA: Player, playerB: Player) => Promise<void>;
   canUpdateMatch: (match: Match) => boolean;
 };
 
@@ -49,8 +46,8 @@ const RoyaleTournament: React.FC<RoyaleTournamentProps> = ({
   canUpdateMatch,
 }) => {
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [challengerId, setChallengerId] = useState('');
-  const [opponentId, setOpponentId] = useState('');
+  const [playerAId, setPlayerAId] = useState('');
+  const [playerBId, setPlayerBId] = useState('');
   const [creating, setCreating] = useState(false);
 
   const players = tournament.players || [];
@@ -75,12 +72,15 @@ const RoyaleTournament: React.FC<RoyaleTournamentProps> = ({
     return formatRematchProgress(status, cooldownName);
   };
 
-  const challenger = players.find((player) => player.id === challengerId);
-  const opponentOptions = challenger
-    ? getOpponentEligibility(challenger, players, ladder, matches)
-    : [];
-  const selectedOpponent = opponentOptions.find((option) => option.player.id === opponentId);
-  const canSubmitChallenge = Boolean(challenger && selectedOpponent && !creating);
+  const playerA = players.find((player) => player.id === playerAId);
+  const playerB = players.find((player) => player.id === playerBId);
+  const pairingPreview =
+    playerA && playerB && playerA.id !== playerB.id
+      ? orderPlayersAsChallengerOpponent(playerA, playerB, ladder)
+      : null;
+  const canSubmitChallenge = Boolean(
+    playerA && playerB && playerA.id !== playerB.id && !creating
+  );
 
   const pendingMatches = matches.filter((match) => match && !match.complete && match.player2);
   const completedMatches = useMemo(
@@ -89,16 +89,16 @@ const RoyaleTournament: React.FC<RoyaleTournamentProps> = ({
   );
 
   const handleOpenDialog = () => {
-    setChallengerId('');
-    setOpponentId('');
+    setPlayerAId('');
+    setPlayerBId('');
     setDialogOpen(true);
   };
 
   const handleCreate = async () => {
-    if (!challenger || !selectedOpponent) return;
+    if (!playerA || !playerB || playerA.id === playerB.id) return;
     setCreating(true);
     try {
-      await onCreateChallenge(challenger, selectedOpponent.player);
+      await onCreateChallenge(playerA, playerB);
       setDialogOpen(false);
     } catch (error) {
       console.error('Error creating challenge:', error);
@@ -124,7 +124,7 @@ const RoyaleTournament: React.FC<RoyaleTournamentProps> = ({
         <Typography variant="h5">Royale Ladder</Typography>
         {!tournament.complete && (
           <Button variant="contained" onClick={handleOpenDialog} disabled={players.length < 2}>
-            Create Challenge
+            Create Match
           </Button>
         )}
       </Box>
@@ -195,11 +195,11 @@ const RoyaleTournament: React.FC<RoyaleTournamentProps> = ({
 
         <Grid item xs={12} md={6}>
           <Typography variant="h6" gutterBottom>
-            Pending Challenges
+            Pending Matches
           </Typography>
           {pendingMatches.length === 0 ? (
             <Typography color="text.secondary" sx={{ mb: 3 }}>
-              No pending challenges.
+              No pending matches.
             </Typography>
           ) : (
             pendingMatches.map((match) => (
@@ -248,22 +248,19 @@ const RoyaleTournament: React.FC<RoyaleTournamentProps> = ({
       </Grid>
 
       <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} fullWidth maxWidth="sm">
-        <DialogTitle>Create Challenge</DialogTitle>
+        <DialogTitle>Create Match</DialogTitle>
         <DialogContent>
           <Alert severity="info" sx={{ mb: 2 }}>
-            You can create any pairing. Ladder and rematch rules are checked when you enter the
-            score and Completed at time.
+            Pick the two players. The system sets the challenger as whoever was lower-ranked (or
+            unranked) at the Completed at time when you enter the score.
           </Alert>
           <FormControl fullWidth sx={{ mt: 1, mb: 2 }}>
-            <InputLabel id="challenger-label">Challenger</InputLabel>
+            <InputLabel id="player-a-label">Player A</InputLabel>
             <Select
-              labelId="challenger-label"
-              label="Challenger"
-              value={challengerId}
-              onChange={(event) => {
-                setChallengerId(event.target.value);
-                setOpponentId('');
-              }}
+              labelId="player-a-label"
+              label="Player A"
+              value={playerAId}
+              onChange={(event) => setPlayerAId(event.target.value)}
             >
               {players.map((player) => (
                 <MenuItem key={player.id} value={player.id}>
@@ -272,50 +269,36 @@ const RoyaleTournament: React.FC<RoyaleTournamentProps> = ({
               ))}
             </Select>
           </FormControl>
-          {challenger && (
-            <>
-              <Typography variant="subtitle2" gutterBottom>
-                Opponent
-              </Typography>
-              {opponentOptions.length === 0 ? (
-                <Alert severity="info">No other players in this tournament.</Alert>
-              ) : (
-                <List>
-                  {opponentOptions.map((option) => {
-                    const rematchLabel = rematchLabelFor(option.rematch);
-                    const remaining = option.rematch.blocked ? option.rematch.remaining : 0;
-                    const advisory = option.reason
-                      ? `May be rejected on score entry: ${option.reason}`
-                      : rematchLabel || 'Looks eligible under current standings';
-
-                    return (
-                      <ListItemButton
-                        key={option.player.id}
-                        selected={opponentId === option.player.id}
-                        onClick={() => setOpponentId(option.player.id)}
-                      >
-                        <ListItemText
-                          primary={`${option.player.name} — ${officeDaysLabel(option.player)}`}
-                          secondary={advisory}
-                        />
-                        {option.rematch.hasPlayed && (
-                          <Chip
-                            size="small"
-                            color={option.rematch.blocked ? 'warning' : 'success'}
-                            label={
-                              option.rematch.blocked
-                                ? `${remaining} left before rematch`
-                                : 'Rematch ready'
-                            }
-                            sx={{ ml: 1 }}
-                          />
-                        )}
-                      </ListItemButton>
-                    );
-                  })}
-                </List>
-              )}
-            </>
+          <FormControl fullWidth sx={{ mb: 2 }}>
+            <InputLabel id="player-b-label">Player B</InputLabel>
+            <Select
+              labelId="player-b-label"
+              label="Player B"
+              value={playerBId}
+              onChange={(event) => setPlayerBId(event.target.value)}
+            >
+              {players
+                .filter((player) => player.id !== playerAId)
+                .map((player) => (
+                  <MenuItem key={player.id} value={player.id}>
+                    {player.name} — {officeDaysLabel(player)}
+                  </MenuItem>
+                ))}
+            </Select>
+          </FormControl>
+          {pairingPreview && (
+            <Typography variant="body2" color="text.secondary">
+              Under current standings this would be treated as{' '}
+              <strong>{pairingPreview.challenger.name}</strong> challenging{' '}
+              <strong>{pairingPreview.opponent.name}</strong>. Final roles use the Completed at
+              ladder.
+            </Typography>
+          )}
+          {playerA && playerB && playerA.id !== playerB.id && !pairingPreview && (
+            <Alert severity="warning" sx={{ mt: 1 }}>
+              Both players are currently unranked. Entering a score will only succeed if one of them
+              was ranked at the Completed at time.
+            </Alert>
           )}
         </DialogContent>
         <DialogActions>

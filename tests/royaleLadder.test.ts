@@ -10,6 +10,8 @@ import {
   getRematchBlockReason,
   getRematchStatus,
   getRoyaleResultBlockReason,
+  orderPlayersAsChallengerOpponent,
+  orientRoyaleMatchAsOf,
 } from '../utils/royaleLadder';
 
 function player(id: string, name: string, seed?: number): Player {
@@ -257,13 +259,56 @@ describe('getRoyaleResultBlockReason', () => {
     ).toMatch(/needs 2 more/);
   });
 
-  it('rejects challenging down based on ladder state at Completed at', () => {
+  it('infers the lower-ranked player as challenger regardless of stored order', () => {
     const pending = match(alice, dave, undefined, false);
     const matches = [pending];
+    const oriented = orientRoyaleMatchAsOf(
+      pending,
+      ladder,
+      matches,
+      '2026-01-01T00:00:00.000Z',
+      11,
+      7
+    );
 
+    expect(oriented).not.toHaveProperty('error');
+    if ('error' in oriented) return;
+    expect(oriented.challenger.id).toBe(dave.id);
+    expect(oriented.opponent.id).toBe(alice.id);
+    expect(oriented.match.player1Points).toBe(7);
+    expect(oriented.match.player2Points).toBe(11);
     expect(
       getRoyaleResultBlockReason(pending, ladder, matches, '2026-01-01T00:00:00.000Z')
-    ).toMatch(/ranked above you/);
+    ).toBeNull();
+  });
+
+  it('rejects when both players were unranked at Completed at', () => {
+    const pending = match(eve, frank, undefined, false);
+    expect(
+      getRoyaleResultBlockReason(pending, ladder, [pending], '2026-01-01T00:00:00.000Z')
+    ).toMatch(/both players were unranked/);
+  });
+});
+
+describe('orderPlayersAsChallengerOpponent', () => {
+  const ladder = ['a', 'b', 'c', 'd'];
+
+  it('makes the lower-ranked player the challenger', () => {
+    expect(orderPlayersAsChallengerOpponent(alice, dave, ladder)).toEqual({
+      challenger: dave,
+      opponent: alice,
+    });
+  });
+
+  it('makes an unranked player the challenger against a ranked player', () => {
+    expect(orderPlayersAsChallengerOpponent(eve, bob, ladder)).toEqual({
+      challenger: eve,
+      opponent: bob,
+    });
+  });
+
+  it('returns null when both players are unranked', () => {
+    expect(orderPlayersAsChallengerOpponent(eve, frank, ladder)).toBeNull();
   });
 });
 
